@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+
+  --color-sand-50: #fbf8f3;
+  --color-sand-100: #f6f3ee;
+  --color-sand-200: #ebe4d8;
+  --color-sand-300: #d9cfc0;
+  --color-ink-900: #12181a;
+  --color-ink-800: #1c2427;
+  --color-ink-700: #2a3538;
+  --color-ink-500: #5c6b70;
+  --color-ink-400: #7d8b90;
+
+  --color-teal-950: #062e2c;
+  --color-teal-900: #0a4542;
+  --color-teal-800: #0f6e6a;
+  --color-teal-700: #14827d;
+  --color-teal-600: #1a9a94;
+  --color-teal-500: #2bb3ac;
+  --color-teal-400: #4ec9c2;
+  --color-teal-300: #7fdad5;
+  --color-teal-100: #d5f4f2;
+  --color-teal-50: #eefaf9;
+
+  --color-sunset-600: #c45c26;
+  --color-sunset-500: #e07a5f;
+  --color-sunset-400: #ee9b7a;
+  --color-sunset-100: #fde8df;
+
+  --color-live-500: #22c55e;
+  --color-crowd-low: #16a34a;
+  --color-crowd-mod: #ca8a04;
+  --color-crowd-high: #dc2626;
+
+  --shadow-card: 0 10px 30px -18px rgb(18 24 26 / 0.28);
+  --shadow-float: 0 18px 50px -24px rgb(15 110 106 / 0.45);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--color-sand-100);
+  color: var(--color-ink-900);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.dark body,
+.dark {
+  background: #0b1113;
+  color: #f4efe6;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+h1,
+h2,
+.font-display {
+  font-family: var(--font-display);
+}
+
+::selection {
+  background: #2bb3ac55;
+}
+
+.glass {
+  background: color-mix(in oklab, white 72%, transparent);
+  backdrop-filter: blur(18px);
+  border: 1px solid color-mix(in oklab, white 55%, transparent);
+}
+
+.dark .glass {
+  background: color-mix(in oklab, #151c1e 78%, transparent);
+  border-color: color-mix(in oklab, white 8%, transparent);
+}
+
+.map-tiles {
+  filter: saturate(0.85) contrast(1.02);
+}
+
+.dark .map-tiles {
+  filter: grayscale(0.15) brightness(0.85) contrast(1.05);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes pulse-live {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(34 197 94 / 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgb(34 197 94 / 0);
+  }
+}
+
+.pulse-live {
+  animation: pulse-live 1.8s ease-out infinite;
+}
+
+.leaflet-container {
+  font-family: var(--font-sans);
+  background: #d9cfc0;
+  width: 100%;
+  height: 100%;
+}
+
+.dark .leaflet-container {
+  background: #12181a;
+}

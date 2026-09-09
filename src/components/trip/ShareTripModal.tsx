@@ -1,4 +1,5 @@
 import { toast } from 'sonner'
+import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '@/store/useAppStore'
 import { getDestination } from '@/data/destinations'
 import { Button } from '@/components/ui/Button'
@@ -62,6 +63,7 @@ export function AdaptationCard() {
   const accept = useAppStore((s) => s.acceptAdaptation)
   const keep = useAppStore((s) => s.keepOriginal)
   const why = useAppStore((s) => s.askWhy)
+  const navigate = useNavigate()
   if (!adaptation) return null
   return (
     <div className="rounded-3xl bg-ink-900 p-5 text-white shadow-float">
@@ -88,6 +90,15 @@ export function AdaptationCard() {
       <div className="mt-4 flex flex-wrap gap-2">
         <Button variant="sunset" onClick={accept}>
           {adaptation.type === 'weather' ? 'Replace Activity' : 'Accept Change'}
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            accept()
+            navigate('/live')
+          }}
+        >
+          View Updated Route
         </Button>
         <Button variant="secondary" onClick={keep}>
           Keep Original Plan

@@ -8,10 +8,10 @@ import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 
 const CATS: { id: ExpenseCategory; label: string; icon: string; color: string }[] = [
-  { id: 'stay', label: 'Stay', icon: '🏨', color: '#0f6e6a' },
+  { id: 'stay', label: 'Accommodation', icon: '🏨', color: '#0f6e6a' },
   { id: 'food', label: 'Food', icon: '🍛', color: '#c45c26' },
   { id: 'transport', label: 'Transport', icon: '🚕', color: '#1d4ed8' },
-  { id: 'tickets', label: 'Tickets', icon: '🎟️', color: '#7c3aed' },
+  { id: 'tickets', label: 'Activities', icon: '🎟️', color: '#7c3aed' },
   { id: 'shopping', label: 'Shopping', icon: '🛍️', color: '#ca8a04' },
   { id: 'other', label: 'Other', icon: '✨', color: '#64748b' },
 ]
@@ -41,6 +41,7 @@ export function BudgetPage() {
         <h1 className="font-display text-4xl">Budget</h1>
         <Button onClick={() => setOpen(true)}>+ Add Expense</Button>
       </div>
+      <p className="mt-2 text-xs text-ink-400">Place prices are unavailable unless you enter an actual cost.</p>
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Tile k="Total Budget" v={formatInr(budget)} />
         <Tile k="Spent" v={formatInr(spent)} />
@@ -51,16 +52,20 @@ export function BudgetPage() {
         <div className="rounded-3xl bg-white p-5 shadow-card dark:bg-ink-800">
           <p className="font-medium">Spend mix</p>
           <div className="h-64">
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie data={byCat} dataKey="value" nameKey="label" innerRadius={60} outerRadius={90} paddingAngle={3}>
-                  {byCat.map((c) => (
-                    <Cell key={c.id} fill={c.color} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v) => formatInr(Number(v))} />
-              </PieChart>
-            </ResponsiveContainer>
+            {byCat.length ? (
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={byCat} dataKey="value" nameKey="label" innerRadius={60} outerRadius={90} paddingAngle={3}>
+                    {byCat.map((c) => (
+                      <Cell key={c.id} fill={c.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(v) => formatInr(Number(v))} />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="grid h-full place-items-center text-sm text-ink-400">No expenses yet</p>
+            )}
           </div>
         </div>
         <div className="space-y-2">

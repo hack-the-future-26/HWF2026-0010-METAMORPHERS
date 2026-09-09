@@ -7,9 +7,15 @@ import { OSM_UNAVAILABLE, WEATHER_UNAVAILABLE } from '@/lib/osmCopy'
 import { API } from './config'
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
-  if (!res.ok) throw new Error(`Request failed ${res.status}`)
-  return (await res.json()) as T
+  const ctrl = new AbortController()
+  const timer = globalThis.setTimeout(() => ctrl.abort(), 8000)
+  try {
+    const res = await fetch(url, { ...init, signal: init?.signal ?? ctrl.signal })
+    if (!res.ok) throw new Error(`Request failed ${res.status}`)
+    return (await res.json()) as T
+  } finally {
+    globalThis.clearTimeout(timer)
+  }
 }
 
 const NOMINATIM = API.nominatimUrl || API.geocodingUrl || 'https://nominatim.openstreetmap.org'
@@ -30,7 +36,7 @@ async function overpassElements(query: string): Promise<{ elements: OsmEl[]; ok:
   for (const url of OVERPASS_MIRRORS) {
     try {
       const ctrl = new AbortController()
-      const timer = globalThis.setTimeout(() => ctrl.abort(), 22000)
+      const timer = globalThis.setTimeout(() => ctrl.abort(), 8000)
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
@@ -340,6 +346,9 @@ function classify(tags: Record<string, string>): { category: PlaceCategory; near
   if (amenity === 'atm' || amenity === 'bank') return { category: 'emergency', nearbyKind: 'atm', styles: [], indoor: true, weatherSensitive: false }
   if (amenity === 'toilets') return { category: 'emergency', nearbyKind: 'restroom', styles: [], indoor: true, weatherSensitive: false }
   if (amenity === 'fuel') return { category: 'transport', nearbyKind: 'fuel', styles: [], indoor: false, weatherSensitive: false }
+  if (amenity === 'bus_station' || tags.aeroway === 'aerodrome' || tags.railway === 'station' || tags.public_transport === 'station') {
+    return { category: 'transport', styles: [], indoor: true, weatherSensitive: false }
+  }
   if (amenity === 'cafe') return { category: 'cafe', nearbyKind: 'cafe', styles: ['food', 'relaxation'], indoor: true, weatherSensitive: false }
   if (amenity === 'restaurant' || amenity === 'fast_food' || amenity === 'food_court') {
     return { category: 'restaurant', nearbyKind: 'restaurant', styles: ['food'], indoor: true, weatherSensitive: false }
@@ -424,7 +433,9 @@ function toPlace(el: OsmEl, origin: LatLng, destId: string): Place | null {
     estimatedCost: 0,
     indoor: meta.indoor,
     weatherSensitive: meta.weatherSensitive,
-    tags: Object.keys(tags).slice(0, 8),
+    tags: [tags.amenity, tags.tourism, tags.leisure, tags.shop, tags.public_transport, tags.aeroway]
+      .filter(Boolean)
+      .slice(0, 8),
     source: 'osm',
     website: tags.website || tags['contact:website'],
     phone: tags.phone || tags['contact:phone'],
@@ -568,6 +579,10 @@ export const placesService = {
   nwr["amenity"="place_of_worship"]${around};
   nwr["natural"]${around};
   nwr["amenity"~"restaurant|cafe|fast_food|food_court"]${around};
+  nwr["tourism"~"hotel|guest_house|hostel"]${around};
+  nwr["amenity"="bus_station"]${around};
+  nwr["aeroway"="aerodrome"]${around};
+  nwr["railway"="station"]${around};
 );
 out center 80;
 `

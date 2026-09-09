@@ -1,12 +1,16 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   Bookmark,
+  Bus,
   Compass,
+  Hotel,
+  Languages,
   LayoutDashboard,
   MapPinned,
   Radio,
   Route,
   Sparkles,
+  UtensilsCrossed,
   UserRound,
   Wallet,
 } from 'lucide-react'
@@ -22,6 +26,10 @@ const items = [
 ]
 
 const extra = [
+  { to: '/food', label: 'Food', icon: UtensilsCrossed },
+  { to: '/stay', label: 'Stay', icon: Hotel },
+  { to: '/transport', label: 'Transport', icon: Bus },
+  { to: '/translate', label: 'Translate', icon: Languages },
   { to: '/budget', label: 'Budget', icon: Wallet },
   { to: '/saved', label: 'Saved', icon: Bookmark },
   { to: '/profile', label: 'Profile', icon: UserRound },
@@ -112,6 +120,12 @@ export function TopBar() {
   const appMode = useAppStore((s) => s.appMode)
   const setAppMode = useAppStore((s) => s.setAppMode)
   const loc = useAppStore((s) => s.location)
+  const destId = useAppStore((s) => s.planner.destinationId)
+  const liveStarted = useAppStore((s) => s.liveStarted)
+  const areaLabel =
+    destId === 'vizag' || !destId
+      ? '📍 Near Sagar Nagar, Endada, Andhra Pradesh'
+      : `📍 Destination: ${useAppStore.getState().planner.destinationQuery}`
 
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-sand-200/80 bg-sand-100/80 px-4 py-3 backdrop-blur-xl dark:border-white/8 dark:bg-[#0b1113]/80 lg:px-8">
@@ -124,9 +138,9 @@ export function TopBar() {
       <div className="min-w-0 flex-1 truncate text-[11px] text-ink-500 lg:text-sm">
         {loc.loading
           ? 'Getting your location...'
-          : loc.permission === 'granted' && loc.label
+          : liveStarted && loc.permission === 'granted' && loc.label
             ? `📍 You’re near ${loc.label}`
-            : 'Your trip. Your preferences. One intelligent plan.'}
+            : areaLabel}
       </div>
       <div className="ml-auto flex items-center gap-2">
         <button

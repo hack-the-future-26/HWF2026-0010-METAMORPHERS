@@ -15,8 +15,8 @@ export const DESTINATIONS: Destination[] = [
     tagline: 'The City of Destiny — beaches, hills and harbour light.',
     image:
       'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1600&q=80',
-    lat: 17.6868,
-    lng: 83.2185,
+    lat: 17.7673,
+    lng: 83.36,
     timezone: 'Asia/Kolkata',
   },
   {

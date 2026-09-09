@@ -62,10 +62,15 @@ export function PlanTripPage() {
         <Card className="mt-6 p-6 sm:p-8">
           {planner.step === 1 && (
             <Step title="Where do you want to go?">
+              <p className="mb-3 text-sm text-ink-500">Default demo destination: Visakhapatnam. Search only if you want another city.</p>
               <Input
                 value={planner.destinationQuery}
-                onChange={(e) => setPlanner({ destinationQuery: e.target.value, destinationId: null })}
-                placeholder="Search destination..."
+                onChange={(e) => {
+                  const q = e.target.value
+                  const vizag = !q.trim() || q.toLowerCase().includes('visakh') || q.toLowerCase().includes('vizag')
+                  setPlanner({ destinationQuery: q, destinationId: vizag ? 'vizag' : null })
+                }}
+                placeholder="Visakhapatnam"
               />
               {geoLoading && <p className="mt-2 text-xs text-ink-400">Searching OpenStreetMap…</p>}
               <div className="mt-4 grid gap-3">

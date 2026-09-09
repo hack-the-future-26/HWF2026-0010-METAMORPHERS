@@ -16,7 +16,8 @@ import { useEffect, useState } from 'react'
 export function ActivityModal() {
   const id = useAppStore((s) => s.selectedPlaceId)
   const set = useAppStore((s) => s.setSelectedPlace)
-  const place = id ? getPlace(id) : undefined
+  const nearbyPlaces = useAppStore((s) => s.nearbyPlaces)
+  const place = id ? (getPlace(id) ?? nearbyPlaces.find((p) => p.id === id)) : undefined
   const conditions = useAppStore((s) => s.conditions)
   const styles = useAppStore((s) => s.trip?.styles ?? s.user.preferences.styles)
   const save = useAppStore((s) => s.savePlace)
@@ -63,7 +64,7 @@ export function ActivityModal() {
         <PlaceMiniMap lat={place.lat} lng={place.lng} />
       )}
       <div className="mb-3 flex flex-wrap gap-2">
-        <Badge>{place.ratingKnown === false ? 'Rating unavailable' : `⭐ ${place.rating}`}</Badge>
+        <Badge>{appMode === 'real' && place.ratingKnown !== true ? 'Rating unavailable' : place.ratingKnown === false ? 'Rating unavailable' : `⭐ ${place.rating}`}</Badge>
         <Badge tone="sand">{place.category}</Badge>
         {appMode === 'demo' && place.crowdKnown !== false ? (
           <CrowdDot level={crowd} />
@@ -77,7 +78,7 @@ export function ActivityModal() {
       <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
         <Info k="Location" v={`${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`} />
         <Info k="Address" v={exactAddress || `${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`} />
-        <Info k="Opening hours" v={place.hoursKnown === false ? 'Not available from OSM' : place.openingHours} />
+        <Info k="Opening hours" v={place.hoursKnown !== true ? 'Opening hours unavailable' : place.openingHours} />
         <Info
           k="Entry fee"
           v={place.priceKnown === false ? 'Price unavailable' : place.entryFee ? formatInr(place.entryFee) : 'Free'}

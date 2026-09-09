@@ -54,7 +54,9 @@ export function LiveTripPage() {
 
   const day = trip?.daysPlan[0]
   const nextAct = day?.activities.find((a) => a.kind === 'place')
-  const next = nextAct?.placeId ? getPlace(nextAct.placeId) : undefined
+  const next = nextAct?.placeId
+    ? (getPlace(nextAct.placeId) ?? nearbyPlaces.find((p) => p.id === nextAct.placeId))
+    : undefined
 
   const ranked = useMemo(() => {
     const pool = nearbyPlaces.length ? nearbyPlaces : []
@@ -62,7 +64,9 @@ export function LiveTripPage() {
   }, [nearbyPlaces, origin.lat, origin.lng, trip, conditions, remaining])
 
   const top = ranked[0]
-  const nextMovePlace = top ? getPlace(top.score.placeId) : next
+  const nextMovePlace = top
+    ? (getPlace(top.score.placeId) ?? nearbyPlaces.find((p) => p.id === top.score.placeId) ?? next)
+    : next
 
   const nearby = useMemo(() => {
     let list = nearbyPlaces
@@ -92,7 +96,7 @@ export function LiveTripPage() {
           Live mode starts GPS tracking, watches weather, and keeps your next stop in sync.
         </p>
         <Button className="mt-6" size="lg" onClick={start}>
-          Enter Live Trip Mode
+          Start Trip
         </Button>
       </div>
     )
@@ -105,7 +109,7 @@ export function LiveTripPage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-teal-700">Live Trip Mode</p>
+          <p className="text-xs uppercase tracking-[0.18em] text-teal-700">🟢 Trip Active</p>
           <h1 className="font-display text-4xl">
             {location.loading ? 'Getting your location...' : 'You’re here 📍'}
           </h1>
@@ -121,7 +125,7 @@ export function LiveTripPage() {
           )}
           {origin.source !== 'gps' && (
             <p className="text-xs text-ink-400">
-              Using {origin.source === 'destination' ? 'destination' : 'fallback'} ·{' '}
+              GPS unavailable. Continuing with planned route.{' '}
               <button className="underline" onClick={() => void requestLocation()}>
                 Allow location
               </button>
@@ -195,8 +199,8 @@ export function LiveTripPage() {
               </li>
               <li>
                 🕐 Opening status:{' '}
-                {next?.hoursKnown === false
-                  ? 'Not available from OSM'
+                {next?.hoursKnown !== true
+                  ? 'Opening hours unavailable'
                   : conditions.closures.includes(next?.id ?? '')
                     ? 'Closed'
                     : next
@@ -305,8 +309,8 @@ export function LiveTripPage() {
                 <span className="block font-medium">{p.name}</span>
                 <span className="text-xs text-ink-500">
                   {formatKm(haversineKm(origin, p))}
-                  {p.ratingKnown === false ? ' · Not available from OSM' : ` · ⭐ ${p.rating}`}
-                  {p.priceKnown === false ? '' : p.estimatedCost ? ` · ${formatInr(p.estimatedCost)}` : ''}
+                  {appMode === 'real' || p.ratingKnown !== true ? ' · Rating unavailable' : ` · ⭐ ${p.rating}`}
+                  {p.priceKnown !== true ? ' · Price unavailable' : p.estimatedCost ? ` · ${formatInr(p.estimatedCost)}` : ''}
                 </span>
               </span>
             </button>

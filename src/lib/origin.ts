@@ -2,9 +2,26 @@ import { PLACES } from '@/data/places'
 import { getDestination } from '@/data/destinations'
 import type { LocationState, Place } from '@/types'
 import { haversineKm } from '@/lib/utils'
+import { DEMO_AREA } from '@/lib/demoLocation'
 
-/** Neutral map center — never treated as the user's GPS or a destination. */
-const UNLOCATED = { lat: 20.5937, lng: 78.9629, label: 'Choose a destination to begin' }
+/** Discovery origin for the selected destination — not overwritten by GPS. */
+export function areaOrigin(destinationId?: string | null): {
+  lat: number
+  lng: number
+  label: string
+  source: 'destination'
+  accuracy: null
+} {
+  const id = destinationId || DEMO_AREA.destinationId
+  if (id === 'vizag') {
+    return { lat: DEMO_AREA.lat, lng: DEMO_AREA.lng, label: DEMO_AREA.label, source: 'destination', accuracy: null }
+  }
+  const d = getDestination(id)
+  if (d.lat === 0 && d.lng === 0) {
+    return { lat: DEMO_AREA.lat, lng: DEMO_AREA.lng, label: DEMO_AREA.label, source: 'destination', accuracy: null }
+  }
+  return { lat: d.lat, lng: d.lng, label: d.name, source: 'destination', accuracy: null }
+}
 
 export function activeOrigin(
   location: LocationState,
@@ -34,7 +51,7 @@ export function activeOrigin(
       accuracy: location.fix.accuracy,
     }
   }
-  return { ...UNLOCATED, source: 'fallback', accuracy: null }
+  return { ...areaOrigin(destinationId ?? DEMO_AREA.destinationId), source: 'fallback', accuracy: null }
 }
 
 /** Origin for itinerary generation: destination city unless GPS is already there. */

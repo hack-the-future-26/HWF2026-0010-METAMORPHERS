@@ -45,7 +45,6 @@ export function TripMap({ height = 420 }: { height?: number }) {
   const toggle = useAppStore((s) => s.toggleMapFilter)
   const theme = useAppStore((s) => s.theme)
   const select = useAppStore((s) => s.setSelectedPlace)
-  const conditions = useAppStore((s) => s.conditions)
   const location = useAppStore((s) => s.location)
   const nearbyPlaces = useAppStore((s) => s.nearbyPlaces)
   const liveRoute = useAppStore((s) => s.liveRoute)
@@ -56,10 +55,12 @@ export function TripMap({ height = 420 }: { height?: number }) {
   const origin = activeOrigin(location, destId)
 
   const day = trip?.daysPlan[mapDay]
-  const itineraryPts = (day?.activities.map((a) => a.placeId).filter(Boolean) as string[])
-    .map((id) => getPlace(id))
-    .filter(Boolean)
-    .map((p) => [p!.lat, p!.lng] as [number, number])
+  const itineraryPts = (day?.activities ?? [])
+    .map((a) => a.placeId)
+    .filter((id): id is string => Boolean(id))
+    .map((id) => getPlace(id) ?? nearbyPlaces.find((p) => p.id === id))
+    .filter((p): p is NonNullable<typeof p> => Boolean(p))
+    .map((p) => [p.lat, p.lng] as [number, number])
 
   const catalog =
     appMode === 'demo'

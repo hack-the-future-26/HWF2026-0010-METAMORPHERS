@@ -1,37 +1,81 @@
+import { useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { LocateFixed, MapPin, Search } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { DESTINATIONS } from '@/data/destinations'
+import { placesForDestination } from '@/data/places'
 import { QUICK_PRESETS, useAppStore } from '@/store/useAppStore'
-import { greeting } from '@/lib/utils'
+import { greeting, formatKm, haversineKm } from '@/lib/utils'
+import { DEMO_AREA } from '@/lib/demoLocation'
+import { areaOrigin } from '@/lib/origin'
+import { HOURS_UNAVAILABLE, OSM_UNAVAILABLE, PRICE_UNAVAILABLE, WEATHER_UNAVAILABLE, honestRating } from '@/lib/osmCopy'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { AdaptStory } from '@/components/home/AdaptStory'
+
+const LANDMARKS = ['rk-beach', 'kailasagiri', 'submarine', 'tenneti', 'rushikonda']
 
 export function HomePage() {
   const user = useAppStore((s) => s.user)
   const query = useAppStore((s) => s.planner.destinationQuery)
   const setPlanner = useAppStore((s) => s.setPlanner)
   const applyPreset = useAppStore((s) => s.applyPreset)
+  const weather = useAppStore((s) => s.conditions.weather)
+  const hydrate = useAppStore((s) => s.hydrateWeather)
+  const nearby = useAppStore((s) => s.nearbyPlaces)
+  const nearbyLoading = useAppStore((s) => s.nearbyLoading)
+  const nearbyError = useAppStore((s) => s.nearbyError)
+  const refresh = useAppStore((s) => s.refreshNearby)
+  const trip = useAppStore((s) => s.trip)
+  const adaptation = useAppStore((s) => s.adaptation)
+  const destId = useAppStore((s) => s.planner.destinationId) ?? DEMO_AREA.destinationId
+  const appMode = useAppStore((s) => s.appMode)
+  const add = useAppStore((s) => s.addPlaceToTrip)
+  const save = useAppStore((s) => s.savePlace)
   const navigate = useNavigate()
-  const matches = DESTINATIONS.filter((d) =>
-    d.name.toLowerCase().includes(query.toLowerCase()) || d.state.toLowerCase().includes(query.toLowerCase()),
+  const origin = areaOrigin(destId)
+  const matches = DESTINATIONS.filter(
+    (d) =>
+      query &&
+      (d.name.toLowerCase().includes(query.toLowerCase()) || d.state.toLowerCase().includes(query.toLowerCase())),
   )
 
-  const requestLocation = useAppStore((s) => s.requestLocation)
-  const location = useAppStore((s) => s.location)
+  useEffect(() => {
+    void hydrate()
+    void refresh()
+  }, [hydrate, refresh])
 
   const goPlan = (destinationId?: string, name?: string) => {
     const guessed =
       destinationId ??
       (query.toLowerCase().includes('vizag') || query.toLowerCase().includes('visakh') ? 'vizag' : null)
     setPlanner({
-      destinationId: guessed,
-      destinationQuery: name ?? query,
-      step: guessed || query.trim() ? 2 : 1,
+      destinationId: guessed ?? destId,
+      destinationQuery: name ?? query ?? DEMO_AREA.city,
+      step: 2,
     })
     navigate('/plan')
   }
+
+  const catalog = destId === 'vizag' ? placesForDestination('vizag') : []
+  const recs = (() => {
+    const pool = [...nearby, ...catalog]
+    const picked = LANDMARKS.map((id) => pool.find((p) => p.id === id)).filter(Boolean)
+    const extras = pool.filter(
+      (p) =>
+        (p.category === 'attraction' || p.styles.includes('beaches') || p.styles.includes('culture')) &&
+        !picked.some((x) => x && x.id === p.id),
+    )
+    return [...picked, ...extras].filter((p): p is NonNullable<typeof p> => Boolean(p)).slice(0, 6)
+  })()
+
+  const recLine = adaptation
+    ? `YatraSense already adapted your plan: ${adaptation.original.title} → ${adaptation.recommended[0]?.title}.`
+    : weather.unavailable
+      ? `Based on your location near ${DEMO_AREA.neighbourhood} and your ${user.preferences.styles.join(' + ') || 'travel'} preferences, YatraSense recommends starting with the coast and a nearby indoor stop once weather loads.`
+      : `Based on the current weather (${weather.tempC}°C, ${weather.rainProbability}% rain), location near ${DEMO_AREA.neighbourhood} and your trip preferences, YatraSense recommends ${
+          weather.rainProbability >= 55 ? 'an indoor museum or cafe first' : recs[0]?.name ?? 'Rushikonda Beach or RK Beach'
+        }${trip ? ` — then continue your ${trip.title}.` : '.'}`
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -48,34 +92,23 @@ export function HomePage() {
             Your trip. Your preferences. One intelligent plan.
           </h1>
           <p className="mt-4 max-w-xl text-sm leading-relaxed text-white/75 sm:text-base">
-            YatraSense plans your journey, understands what’s happening around you, and adapts your itinerary when
-            reality changes.
+            Understand, plan, explore, monitor and adapt — YatraSense keeps Visakhapatnam (and any city you search)
+            on one intelligent itinerary.
           </p>
           <p className="mt-6 text-lg font-medium">Where are you going next?</p>
           <div className="mt-3 flex max-w-xl items-center gap-2 rounded-full bg-white p-1.5 text-ink-900 shadow-float">
             <MapPin className="ml-3 size-4 text-teal-800" />
             <input
               value={query}
-              onChange={(e) => setPlanner({ destinationQuery: e.target.value, destinationId: null })}
+              onChange={(e) => setPlanner({ destinationQuery: e.target.value })}
               onKeyDown={(e) => e.key === 'Enter' && goPlan()}
-              placeholder="Search a city, landmark or destination..."
+              placeholder="Search a city — changing destination is explicit"
               className="h-11 flex-1 bg-transparent text-sm outline-none"
             />
             <button
               className="grid size-10 place-items-center rounded-full hover:bg-sand-100"
-              aria-label="Use current location"
-              onClick={() => {
-                if (location.permission === 'granted' && location.fix) {
-                  const id = `geo_${location.fix.lat.toFixed(4)}_${location.fix.lng.toFixed(4)}`
-                  setPlanner({
-                    destinationQuery: location.label || 'Current location',
-                    destinationId: id,
-                  })
-                  goPlan(id, location.label || 'Current location')
-                  return
-                }
-                void requestLocation()
-              }}
+              aria-label="Use current location for GPS only"
+              onClick={() => navigate('/live')}
             >
               <LocateFixed className="size-4 text-teal-800" />
             </button>
@@ -83,7 +116,7 @@ export function HomePage() {
               <Search className="size-4" /> Search
             </Button>
           </div>
-          {query && (
+          {query && query.toLowerCase() !== 'visakhapatnam' && (
             <div className="mt-3 max-w-xl space-y-1">
               {matches.map((d) => (
                 <button
@@ -100,29 +133,112 @@ export function HomePage() {
               ))}
             </div>
           )}
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Button size="lg" variant="sunset" onClick={() => goPlan('vizag', 'Visakhapatnam')}>
-              Plan My Trip ✨
-            </Button>
-            <Button size="lg" variant="secondary" onClick={() => navigate('/explore')}>
-              Explore Destinations
-            </Button>
-          </div>
         </div>
       </section>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="p-5 lg:col-span-2">
-          <p className="text-sm text-ink-500">Ready to explore somewhere new?</p>
-          <p className="mt-2 rounded-2xl bg-teal-50 p-4 text-sm dark:bg-teal-950">
-            Based on your preferences, you may enjoy {user.preferences.styles.join(' + ')} experiences.
-          </p>
-        </Card>
         <Card className="p-5">
-          <p className="text-xs uppercase tracking-[0.16em] text-ink-400">Travel insight</p>
-          <p className="mt-2 font-display text-xl">Nature + local food is your sweet spot.</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-ink-400">Current location</p>
+          <p className="mt-2 text-lg font-medium">📍 {DEMO_AREA.shortLabel}</p>
+          <p className="text-sm text-ink-500">
+            {DEMO_AREA.city}, {DEMO_AREA.state}
+          </p>
+          <p className="mt-3 inline-flex rounded-full bg-teal-50 px-3 py-1 text-[11px] text-teal-800 dark:bg-teal-950 dark:text-teal-200">
+            Using current area
+          </p>
+          <p className="mt-2 text-xs text-ink-400">Destination: {query || DEMO_AREA.city}</p>
+        </Card>
+        <Card className="p-5 lg:col-span-2">
+          <p className="text-xs uppercase tracking-[0.16em] text-ink-400">Weather · Open-Meteo</p>
+          {weather.unavailable ? (
+            <div className="mt-3">
+              <p className="text-sm">{WEATHER_UNAVAILABLE}</p>
+              <Button size="sm" className="mt-3" onClick={() => void hydrate()}>
+                Try again
+              </Button>
+            </div>
+          ) : (
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
+              <WeatherStat k="Now" v={`${weather.tempC}°C`} />
+              <WeatherStat k="Condition" v={weather.summary || weather.condition} />
+              <WeatherStat k="Rain" v={`${weather.rainProbability}%`} />
+              <WeatherStat k="Wind" v={`${weather.windKph} km/h`} />
+              <WeatherStat k="Feels like" v={`${weather.apparentTempC ?? weather.tempC}°C`} />
+            </div>
+          )}
         </Card>
       </div>
+
+      <section>
+        <h2 className="font-display text-2xl">Quick actions</h2>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button variant="sunset" onClick={() => goPlan('vizag', 'Visakhapatnam')}>
+            Plan My Trip ✨
+          </Button>
+          <Button variant="secondary" onClick={() => navigate('/explore')}>
+            Explore Nearby
+          </Button>
+          <Button variant="secondary" onClick={() => navigate('/food')}>
+            Find Food 🍴
+          </Button>
+          <Button variant="secondary" onClick={() => navigate('/stay')}>
+            Hotels 🏨
+          </Button>
+          <Button variant="secondary" onClick={() => navigate('/transport')}>
+            Transport 🚌
+          </Button>
+        </div>
+      </section>
+
+      <Card className="p-5">
+        <p className="text-xs uppercase tracking-[0.16em] text-teal-800">AI recommendation</p>
+        <p className="mt-2 text-sm leading-relaxed">{recLine}</p>
+      </Card>
+
+      <section>
+        <div className="flex items-end justify-between">
+          <h2 className="font-display text-2xl">Recommended experiences</h2>
+          {nearbyLoading && <span className="text-xs text-ink-400">Finding nearby places...</span>}
+        </div>
+        {nearbyError && (
+          <div className="mt-3 text-sm">
+            Unable to load places right now.{' '}
+            <button className="underline" onClick={() => void refresh(true)}>
+              Try again
+            </button>
+          </div>
+        )}
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {recs.map((p) => (
+            <article key={p.id} className="overflow-hidden rounded-3xl bg-white shadow-card dark:bg-ink-800">
+              {p.image ? (
+                <img src={p.image} alt="" className="h-36 w-full object-cover" />
+              ) : (
+                <div className="grid h-36 place-items-center bg-teal-50 text-3xl">📍</div>
+              )}
+              <div className="p-4">
+                <p className="font-medium">{p.name}</p>
+                <p className="mt-1 text-xs text-ink-500">
+                  {p.styles[0] ?? p.category} · {formatKm(haversineKm(origin, p))}
+                </p>
+                <p className="mt-2 text-[11px] text-ink-400">
+                  {honestRating(p, appMode === 'real')} · {p.hoursKnown === true ? p.openingHours : HOURS_UNAVAILABLE} ·{' '}
+                  {PRICE_UNAVAILABLE}
+                </p>
+                <p className="mt-1 text-[11px] text-ink-400">{p.description ? p.description.slice(0, 90) : OSM_UNAVAILABLE}</p>
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" onClick={() => { add(p.id); navigate('/trip') }}>
+                    Add to Trip
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => save(p.id)}>
+                    ♡ Save
+                  </Button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <section>
         <h2 className="font-display text-2xl">Quick Trip Planner</h2>
@@ -146,6 +262,15 @@ export function HomePage() {
       </section>
 
       <AdaptStory />
+    </div>
+  )
+}
+
+function WeatherStat({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="rounded-2xl bg-sand-100 px-3 py-2 dark:bg-white/5">
+      <p className="text-[11px] text-ink-400">{k}</p>
+      <p className="text-sm font-medium">{v}</p>
     </div>
   )
 }

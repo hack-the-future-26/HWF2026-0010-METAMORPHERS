@@ -33,6 +33,11 @@ export function AppShell() {
   const navigate = useNavigate()
 
   useEffect(() => {
+    useAppStore.getState().ensureDemoDefaults()
+    void useAppStore.getState().refreshNearby(true)
+  }, [])
+
+  useEffect(() => {
     if (nearbyPlaces.length) registerPlaces(nearbyPlaces)
   }, [nearbyPlaces])
 

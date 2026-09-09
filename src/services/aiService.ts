@@ -525,10 +525,15 @@ export async function askAssistant(
     remainingBudget: number
     spent: number
     label?: string
+    destination?: string
     nextName?: string
     routeKm?: number
     routeMin?: number
     mode?: 'real' | 'demo'
+    live?: boolean
+    adapted?: boolean
+    adaptationReason?: string
+    nearbyNames?: string[]
   },
 ): Promise<{ reply: string; action?: 'budget' | 'adapt' | 'next' | 'cheap' | 'go' }> {
   if (API.aiUrl) {
@@ -557,14 +562,22 @@ export async function askAssistant(
   }
 
   const q = prompt.toLowerCase()
-  const here = ctx.label || (ctx.trip ? getDestination(ctx.trip.destinationId).name : 'your current area')
+  const here = ctx.label || (ctx.trip ? getDestination(ctx.trip.destinationId).name : 'Sagar Nagar, Endada')
+  const dest = ctx.destination || ctx.trip?.destinationName || 'Visakhapatnam'
+  if (q.includes('why') && (q.includes('change') || q.includes('itinerary') || q.includes('adapt') || q.includes('replaced'))) {
+    return {
+      reply: ctx.adapted
+        ? `${ctx.adaptationReason || 'Weather required a safer indoor stop.'} Destination is still ${dest}.`
+        : `I haven't changed your itinerary yet. ${ctx.trip ? `Your ${dest} plan still has ${ctx.trip.placeCount} stops.` : 'Plan a trip first, then use Simulate Rain to see adaptation.'}`,
+    }
+  }
   if (q.includes('what should i do') || q.includes('now')) {
     const next = ctx.nextName || 'your next itinerary stop'
     const rain = ctx.conditions.weather.rainProbability
     const eta = ctx.routeMin ? `${ctx.routeMin} min` : ''
     const km = ctx.routeKm ? `${ctx.routeKm} km` : ''
     return {
-      reply: `You're currently near ${here}. It's ${new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })} and rain chance is ${rain}%. Your best option is ${next}${eta ? ` (${km}, ${eta})` : ''}. ${rain >= 55 ? 'If rain builds, switch to an indoor stop.' : 'Weather looks workable right now.'}`,
+      reply: `You're near ${here}. Destination: ${dest}. It's ${new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })} and rain chance is ${rain}%. ${ctx.live ? 'Trip is active. ' : ''}Best next move: ${next}${eta ? ` (${km}, ${eta})` : ''}. ${rain >= 55 ? 'If rain builds, switch to an indoor stop.' : 'Weather looks workable right now.'}`,
       action: 'go',
     }
   }
@@ -576,12 +589,12 @@ export async function askAssistant(
   }
   if (q.includes('cheap') || q.includes('food nearby')) {
     return {
-      reply: `I’ll rank nearby food by distance from ${here}. Open Explore or Live → Near You for live OSM results when location is on.`,
+      reply: `Nearby food from OSM around ${here}: ${ctx.nearbyNames?.slice(0, 3).join(', ') || 'open Food to load restaurants'}. Prices are unavailable unless you enter them in Budget.`,
     }
   }
   if (q.includes('rain') || q.includes('weather')) {
     return {
-      reply: `Rain probability is ${ctx.conditions.weather.rainProbability}%. Outdoor stops may be uncomfortable — I can swap to an indoor alternative.`,
+      reply: `Open-Meteo rain probability near ${dest} is ${ctx.conditions.weather.rainProbability}%. ${ctx.adapted ? 'I already replaced an outdoor stop.' : 'Outdoor stops may need an indoor swap if rain rises.'}`,
       action: 'adapt',
     }
   }

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -20,8 +20,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
@@ -31,9 +31,9 @@ jobs:
         run: npm run build
         env:
           VITE_BASE: /HWF2026-0010-METAMORPHERS/
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
+          name: dist
           path: dist
 
   deploy:
@@ -42,7 +42,31 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.official.outputs.page_url || steps.fallback.outputs.page_url }}
     steps:
-      - id: deployment
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Enable GitHub Pages
+        id: configure
+        continue-on-error: true
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.configure.outcome == 'success'
+        with:
+          path: dist
+      - id: official
+        if: steps.configure.outcome == 'success'
+        continue-on-error: true
         uses: actions/deploy-pages@v4
+      - name: Publish gh-pages branch
+        id: fallback
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          force_orphan: true
+          destination_dir: .

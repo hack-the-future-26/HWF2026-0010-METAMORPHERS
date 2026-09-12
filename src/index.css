@@ -3,24 +3,24 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Fraunces", ui-serif, Georgia, serif;
 
-  --color-sand-50: #fbf8f3;
-  --color-sand-100: #f6f3ee;
-  --color-sand-200: #ebe4d8;
-  --color-sand-300: #d9cfc0;
-  --color-ink-900: #12181a;
-  --color-ink-800: #1c2427;
-  --color-ink-700: #2a3538;
-  --color-ink-500: #5c6b70;
-  --color-ink-400: #7d8b90;
+  --color-sand-50: #fffaf3;
+  --color-sand-100: #f7f0e6;
+  --color-sand-200: #eadfcb;
+  --color-sand-300: #d7c6a8;
+  --color-ink-900: #12161c;
+  --color-ink-800: #1b222b;
+  --color-ink-700: #2c3642;
+  --color-ink-500: #5c6b78;
+  --color-ink-400: #7d8b96;
 
-  --color-teal-950: #062e2c;
-  --color-teal-900: #0a4542;
-  --color-teal-800: #0f6e6a;
-  --color-teal-700: #14827d;
-  --color-teal-600: #1a9a94;
+  --color-teal-950: #062e32;
+  --color-teal-900: #0a4248;
+  --color-teal-800: #0d5c63;
+  --color-teal-700: #12747c;
+  --color-teal-600: #1a8f98;
   --color-teal-500: #2bb3ac;
   --color-teal-400: #4ec9c2;
   --color-teal-300: #7fdad5;
@@ -28,7 +28,7 @@
   --color-teal-50: #eefaf9;
 
   --color-sunset-600: #c45c26;
-  --color-sunset-500: #e07a5f;
+  --color-sunset-500: #e07a3d;
   --color-sunset-400: #ee9b7a;
   --color-sunset-100: #fde8df;
 
@@ -37,8 +37,8 @@
   --color-crowd-mod: #ca8a04;
   --color-crowd-high: #dc2626;
 
-  --shadow-card: 0 10px 30px -18px rgb(18 24 26 / 0.28);
-  --shadow-float: 0 18px 50px -24px rgb(15 110 106 / 0.45);
+  --shadow-card: 0 12px 36px -20px rgb(18 22 28 / 0.35);
+  --shadow-float: 0 20px 50px -24px rgb(13 92 99 / 0.5);
 }
 
 html,
@@ -121,6 +121,20 @@ h2,
   animation: pulse-live 1.8s ease-out infinite;
 }
 
+.app-canvas {
+  background-image:
+    radial-gradient(1200px 520px at -8% -12%, rgb(13 92 99 / 0.12), transparent 55%),
+    radial-gradient(900px 420px at 108% -8%, rgb(224 122 61 / 0.14), transparent 50%),
+    linear-gradient(180deg, #f7f0e6 0%, #f3ece1 100%);
+}
+
+.dark .app-canvas {
+  background-image:
+    radial-gradient(1200px 520px at -8% -12%, rgb(43 179 172 / 0.16), transparent 55%),
+    radial-gradient(900px 420px at 108% -8%, rgb(224 122 61 / 0.12), transparent 50%),
+    linear-gradient(180deg, #0b1113 0%, #12181a 100%);
+}
+
 .leaflet-container {
   font-family: var(--font-sans);
   background: #d9cfc0;
@@ -130,4 +144,15 @@ h2,
 
 .dark .leaflet-container {
   background: #12181a;
+}
+
+@keyframes arrive-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
+.arrive-live {
+  background: linear-gradient(90deg, #0d5c63, #e07a3d, #0d5c63);
+  background-size: 200% 100%;
+  animation: arrive-shimmer 4s linear infinite;
 }

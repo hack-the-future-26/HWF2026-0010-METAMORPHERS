@@ -90,7 +90,9 @@ function pickPlaces(
       weather.condition === 'storm')
   const hot = weather && !weather.unavailable && ((weather.apparentTempC ?? weather.tempC) >= 36)
   const source = extra.length ? extra : demoMode && dest ? placesForDestination(dest) : extra
-  const nearbyPool = uniquePlaces(source).filter((p) => haversineKm(origin, p) < 14)
+  const nearbyPool = uniquePlaces(source).filter(
+    (p) => p.id.startsWith(`poi_${dest}_`) || haversineKm(origin, p) < 22,
+  )
   const all = nearbyPool.filter((p) => {
     if (p.category !== 'attraction' && p.category !== 'hidden') return false
     const far = p.tags.includes('daytrip') || p.durationMin >= 180
@@ -123,7 +125,9 @@ function pickPlaces(
   return fallbackAll
     .map((p) => ({
       p,
-      score: scorePlace(p, origin, planner.styles, dummyConditions, planner.budget, null).total,
+      score:
+        scorePlace(p, origin, planner.styles, dummyConditions, planner.budget, null).total +
+        (p.id.startsWith('poi_') ? 40 : 0),
     }))
     .sort((a, b) => b.score - a.score)
     .map((s) => s.p)
@@ -181,7 +185,7 @@ export function buildTrip(
   const perDay = activitiesPerDay(planner.pace)
   const mode = transportOf(planner)
   const localPool = uniquePlaces(extraPlaces.length ? extraPlaces : demoMode ? placesForDestination(dest.id) : extraPlaces).filter(
-    (p) => haversineKm(origin, p) < 14,
+    (p) => p.id.startsWith(`poi_${dest.id}_`) || haversineKm(origin, p) < 22,
   )
   const hotel = localPool.find((p) => p.category === 'hotel')
   const used = new Set<string>(hotel?.id ? [hotel.id] : [])
@@ -534,6 +538,7 @@ export async function askAssistant(
     adapted?: boolean
     adaptationReason?: string
     nearbyNames?: string[]
+    destinationId?: string | null
   },
 ): Promise<{ reply: string; action?: 'budget' | 'adapt' | 'next' | 'cheap' | 'go' }> {
   if (API.aiUrl) {
@@ -543,87 +548,160 @@ export async function askAssistant(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
+          destinationId: ctx.destinationId,
           context: {
+            destinationId: ctx.destinationId,
             tripTitle: ctx.trip?.title,
             location: ctx.label,
             weather: ctx.conditions.weather,
             remainingBudget: ctx.remainingBudget,
             next: ctx.nextName,
-            mode: ctx.mode,
+            destination: ctx.destination,
+            nearby: ctx.nearbyNames,
           },
         }),
       })
       const data = (await res.json()) as { reply?: string; content?: string; choices?: { message?: { content?: string } }[] }
       const content = data.reply || data.content || data.choices?.[0]?.message?.content
-      if (content) return { reply: content }
+      if (content?.trim()) return { reply: content.trim() }
     } catch {
-      /* rule-based fallback */
+      /* local generator */
     }
   }
 
-  const q = prompt.toLowerCase()
-  const here = ctx.label || (ctx.trip ? getDestination(ctx.trip.destinationId).name : 'Sagar Nagar, Endada')
-  const dest = ctx.destination || ctx.trip?.destinationName || 'Visakhapatnam'
+  return { ...composeReply(prompt, ctx) }
+}
+
+function composeReply(
+  prompt: string,
+  ctx: Parameters<typeof askAssistant>[1],
+): { reply: string; action?: 'budget' | 'adapt' | 'next' | 'cheap' | 'go' } {
+  const q = prompt.toLowerCase().trim()
+  const destMeta = ctx.destinationId ? getDestination(ctx.destinationId) : undefined
+  const dest = ctx.destination || destMeta?.name || ctx.trip?.destinationName || 'your destination'
+  const here = ctx.label || dest
+  const wx = ctx.conditions.weather
+  const weatherLine = wx.unavailable
+    ? 'Live weather is still loading.'
+    : `Right now it is ${wx.tempC}°C${wx.summary ? ` (${wx.summary})` : ''} with ${wx.rainProbability}% rain chance.`
+  const nearby = ctx.nearbyNames?.filter(Boolean) ?? []
+  const nearbyLine = nearby.length
+    ? `Nearby map places: ${nearby.slice(0, 5).join(', ')}.`
+    : 'Open Explore to load OpenStreetMap places around this city.'
+  const famous = destMeta?.famousFor || destMeta?.highlights?.join(', ')
+  const sights = destMeta?.highlights?.length
+    ? destMeta.highlights.slice(0, 4).join(', ')
+    : nearby.slice(0, 3).join(', ') || 'the main city sights'
+  const next = ctx.nextName
+  const tripLine = ctx.trip
+    ? `Your itinerary “${ctx.trip.title}” has ${ctx.trip.placeCount} stops over ${ctx.trip.days} day${ctx.trip.days > 1 ? 's' : ''}.`
+    : 'You have not generated a trip yet — tap Plan My Trip and pick a city.'
+  const budgetLine = `Budget left: ${formatInr(ctx.remainingBudget)} (spent ${formatInr(ctx.spent)}).`
+  const clock = new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })
+
+  const withContext = (answer: string, action?: 'budget' | 'adapt' | 'next' | 'cheap' | 'go') => ({
+    reply: answer,
+    action,
+  })
+
+  if (/^(hi|hello|hey|namaste|yo)\b/.test(q) || q.includes('who are you')) {
+    return withContext(
+      `Namaste — I’m YatraSense, your travel co-pilot for ${dest}. ${tripLine} ${weatherLine} Ask me anything: what to see, food, hotels, transport, weather, budget or a next move.`,
+    )
+  }
   if (q.includes('why') && (q.includes('change') || q.includes('itinerary') || q.includes('adapt') || q.includes('replaced'))) {
-    return {
-      reply: ctx.adapted
-        ? `${ctx.adaptationReason || 'Weather required a safer indoor stop.'} Destination is still ${dest}.`
-        : `I haven't changed your itinerary yet. ${ctx.trip ? `Your ${dest} plan still has ${ctx.trip.placeCount} stops.` : 'Plan a trip first, then use Simulate Rain to see adaptation.'}`,
-    }
+    return withContext(
+      ctx.adapted
+        ? `${ctx.adaptationReason || 'Conditions changed, so I swapped an outdoor stop for a safer indoor one.'} You are still planning around ${dest}.`
+        : `I have not changed your itinerary. ${tripLine}`,
+    )
   }
-  if (q.includes('what should i do') || q.includes('now')) {
-    const next = ctx.nextName || 'your next itinerary stop'
-    const rain = ctx.conditions.weather.rainProbability
-    const eta = ctx.routeMin ? `${ctx.routeMin} min` : ''
-    const km = ctx.routeKm ? `${ctx.routeKm} km` : ''
-    return {
-      reply: `You're near ${here}. Destination: ${dest}. It's ${new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })} and rain chance is ${rain}%. ${ctx.live ? 'Trip is active. ' : ''}Best next move: ${next}${eta ? ` (${km}, ${eta})` : ''}. ${rain >= 55 ? 'If rain builds, switch to an indoor stop.' : 'Weather looks workable right now.'}`,
-      action: 'go',
-    }
+  if (
+    q.includes('what should i do') ||
+    q.includes('do now') ||
+    q.includes('next') ||
+    q.includes('best place') ||
+    q.includes('what to see') ||
+    q.includes('things to do') ||
+    q.includes('attractions') ||
+    q.includes('visit')
+  ) {
+    return withContext(
+      `It is ${clock} near ${here}. ${weatherLine} Famous for ${dest}: ${famous || sights}. ${next ? `On your plan, go next to ${next}${ctx.routeMin ? ` (${ctx.routeKm} km, ${ctx.routeMin} min)` : ''}.` : `Start with ${sights}.`} ${nearbyLine}`,
+      next ? 'go' : 'next',
+    )
   }
-  if (q.includes('500') || (q.includes('spend') && q.includes('today'))) {
-    return {
-      reply: `I found low-cost options near ${here} and can keep the rest of today closer to ${formatInr(500)}.`,
-      action: 'cheap',
-    }
+  if (q.includes('500') || (q.includes('spend') && q.includes('today')) || q.includes('cheap') || q.includes('food') || q.includes('eat') || q.includes('restaurant') || q.includes('cafe')) {
+    return withContext(
+      `For food around ${here}: ${nearby.filter((n) => /cafe|hotel|restaurant|food|biryani|dhaba/i.test(n)).slice(0, 3).join(', ') || nearby.slice(0, 3).join(', ') || 'open the Food tab for OSM restaurants'}. ${budgetLine} Street meals and local thalis usually keep you well under ₹500 if you skip hotel restaurants.`,
+      'cheap',
+    )
   }
-  if (q.includes('cheap') || q.includes('food nearby')) {
-    return {
-      reply: `Nearby food from OSM around ${here}: ${ctx.nearbyNames?.slice(0, 3).join(', ') || 'open Food to load restaurants'}. Prices are unavailable unless you enter them in Budget.`,
-    }
+  if (q.includes('rain') || q.includes('weather') || q.includes('hot') || q.includes('cold') || q.includes('temperature')) {
+    return withContext(
+      `${weatherLine} In ${dest}, ${wx.rainProbability >= 55 ? 'prefer indoor museums, cafes or covered markets until the rain eases.' : 'outdoor sights are workable — carry water and a light layer.'} ${ctx.adapted ? 'I already swapped an outdoor stop.' : 'Tell me if you want the itinerary adapted.'}`,
+      'adapt',
+    )
   }
-  if (q.includes('rain') || q.includes('weather')) {
-    return {
-      reply: `Open-Meteo rain probability near ${dest} is ${ctx.conditions.weather.rainProbability}%. ${ctx.adapted ? 'I already replaced an outdoor stop.' : 'Outdoor stops may need an indoor swap if rain rises.'}`,
-      action: 'adapt',
-    }
+  if (q.includes('hotel') || q.includes('stay') || q.includes('reach') || q.includes('accommodation')) {
+    return withContext(
+      `For stays in ${dest}, open the Stay tab for OpenStreetMap hotels near ${here}. I can route you there on Live when GPS is on. ${nearbyLine}`,
+    )
   }
-  if (q.includes('hotel') || q.includes('reach')) {
-    return {
-      reply: `I’ll route from ${here} to your hotel/base using the live map when GPS is available.`,
-    }
+  if (q.includes('crowd') || q.includes('busy') || q.includes('queue')) {
+    return withContext(
+      `Live crowd counts are not connected. In ${dest}, go early to ${sights.split(',')[0] || 'the main sight'} (before 9:30) or late afternoon to skip peak groups. ${weatherLine}`,
+    )
   }
-  if (q.includes('crowd')) {
-    return {
-      reply: ctx.mode === 'demo'
-        ? `Demo crowd overlay is on. In LIVE MODE we don’t claim live crowd counts.`
-        : `Live crowd counts aren’t connected. I’ll prefer quieter categories and indoor options instead.`,
-    }
+  if (q.includes('budget') || q.includes('reduce') || q.includes('money') || q.includes('cost') || q.includes('price') || q.includes('expensive')) {
+    return withContext(
+      `${budgetLine} OSM does not publish reliable ticket prices. Log real spends in Budget. In ${dest}, public transport and street food stretch the day further than taxis and hotel restaurants.`,
+      'budget',
+    )
   }
-  if (q.includes('budget') || q.includes('reduce')) {
-    return {
-      reply: `You’ve spent ${formatInr(ctx.spent)} with ${formatInr(ctx.remainingBudget)} remaining. I can keep unpaid OSM stops and skip priced extras.`,
-      action: 'budget',
-    }
+  if (q.includes('fit another') || q.includes('another place') || q.includes('time')) {
+    return withContext(
+      ctx.routeMin != null && ctx.routeMin < 25
+        ? `Yes — the next hop is only ${ctx.routeMin} min. You can add a nearby stop from Explore without breaking the day.`
+        : `If the next transfer is under 25 minutes, yes. ${next ? `${next} is currently next.` : tripLine} ${nearbyLine}`,
+    )
   }
-  if (q.includes('fit another') || q.includes('another place')) {
-    return {
-      reply: `If travel time to the next stop is under 25 minutes, yes — I’ll suggest a nearby OSM place that fits the remaining window.`,
-    }
+  if (q.includes('transport') || q.includes('metro') || q.includes('taxi') || q.includes('uber') || q.includes('bus') || q.includes('train') || q.includes('how to get') || q.includes('airport')) {
+    return withContext(
+      `Around ${dest}, use the Transport tab for airport, railway and bus points from OpenStreetMap, then Navigate for OSRM road directions from ${here}. ${ctx.live ? 'Live trip tracking is on.' : 'Start the trip on Live for GPS follow.'}`,
+    )
   }
-  return {
-    reply: `I’m watching ${here}: ${ctx.conditions.weather.summary.toLowerCase()}. Ask for a next move, cheaper food, or a weather reroute.`,
+  if (q.includes('translat') || q.includes('language') || q.includes('speak') || q.includes('telugu') || q.includes('hindi')) {
+    return withContext(
+      `Open Translate for useful phrases. In ${destMeta?.country === 'India' ? dest : dest}, English plus the local language usually works at hotels and major sights.`,
+    )
   }
+  if (q.includes('safe') || q.includes('sos') || q.includes('hospital') || q.includes('emergency') || q.includes('police')) {
+    return withContext(
+      `Use the SOS control for nearby hospitals and police from the map. Emergency numbers: India 112. Stay in well-lit areas at night in ${dest} and keep a local SIM or offline map.`,
+    )
+  }
+  if (q.includes('pack') || q.includes('wear') || q.includes('clothes')) {
+    return withContext(
+      `Pack for ${dest}: ${wx.tempC >= 30 ? 'light cotton, sunscreen, a bottle' : wx.tempC <= 15 ? 'layers and a warm jacket' : 'comfortable walking shoes and a light jacket'}. ${weatherLine}`,
+    )
+  }
+  if (q.includes('best time') || q.includes('when to go') || q.includes('season')) {
+    return withContext(
+      destMeta?.country === 'India'
+        ? `Most of ${dest} is nicest from October to March. Summers are hot on the plains; monsoon (June–September) is lush but wet. ${weatherLine}`
+        : `Check the local season for ${dest}. ${weatherLine} Shoulder months usually mean fewer queues at ${sights.split(',')[0] || 'the main sights'}.`,
+    )
+  }
+  if (q.includes('itinerary') || q.includes('plan') || q.includes('schedule') || q.includes('day')) {
+    return withContext(
+      `${tripLine} ${next ? `Up next: ${next}.` : 'Generate a trip to get a timed day plan.'} Famous stops in ${dest}: ${sights}. ${weatherLine}`,
+    )
+  }
+
+  return withContext(
+    `You asked: “${prompt.trim()}”. For ${dest} (${here}): ${famous ? `${dest} is known for ${famous}.` : ''} ${weatherLine} ${tripLine} ${nearbyLine} I can also help with food, hotels, transport, packing, safety or a next move.`,
+  )
 }
 
 export function seedChat(): ChatMessage[] {
@@ -632,7 +710,7 @@ export function seedChat(): ChatMessage[] {
       id: uid('msg'),
       role: 'assistant',
       content:
-        'Hi, I’m YatraSense AI — I can see your itinerary, weather and budget. Live crowd/traffic need a connected feed. What do you need?',
+        'Hi, I’m YatraSense — ask me anything about your city, weather, food, hotels, routes or budget. I’ll answer using your itinerary and live map data.',
       time: new Date().toISOString(),
     },
   ]

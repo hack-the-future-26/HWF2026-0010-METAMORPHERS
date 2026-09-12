@@ -14,6 +14,7 @@ interface ImportMetaEnv {
   readonly VITE_CROWD_API_URL?: string
   readonly VITE_AI_API_URL?: string
   readonly VITE_AI_MODEL?: string
+  readonly VITE_TRANSLATE_API_URL?: string
 }
 
 interface ImportMeta {

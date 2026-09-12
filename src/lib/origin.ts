@@ -2,9 +2,9 @@ import { PLACES } from '@/data/places'
 import { getDestination } from '@/data/destinations'
 import type { LocationState, Place } from '@/types'
 import { haversineKm } from '@/lib/utils'
-import { DEMO_AREA } from '@/lib/demoLocation'
+import { DEFAULT_CITY } from '@/lib/demoLocation'
 
-/** Discovery origin for the selected destination — not overwritten by GPS. */
+/** Discovery origin for the selected destination — city-center coordinates. */
 export function areaOrigin(destinationId?: string | null): {
   lat: number
   lng: number
@@ -12,15 +12,18 @@ export function areaOrigin(destinationId?: string | null): {
   source: 'destination'
   accuracy: null
 } {
-  const id = destinationId || DEMO_AREA.destinationId
-  if (id === 'vizag') {
-    return { lat: DEMO_AREA.lat, lng: DEMO_AREA.lng, label: DEMO_AREA.label, source: 'destination', accuracy: null }
-  }
+  const id = destinationId || DEFAULT_CITY.destinationId
   const d = getDestination(id)
   if (d.lat === 0 && d.lng === 0) {
-    return { lat: DEMO_AREA.lat, lng: DEMO_AREA.lng, label: DEMO_AREA.label, source: 'destination', accuracy: null }
+    return { lat: DEFAULT_CITY.lat, lng: DEFAULT_CITY.lng, label: DEFAULT_CITY.label, source: 'destination', accuracy: null }
   }
-  return { lat: d.lat, lng: d.lng, label: d.name, source: 'destination', accuracy: null }
+  return {
+    lat: d.lat,
+    lng: d.lng,
+    label: d.state ? `${d.name}, ${d.state}` : `${d.name}, ${d.country}`,
+    source: 'destination',
+    accuracy: null,
+  }
 }
 
 export function activeOrigin(
@@ -51,7 +54,7 @@ export function activeOrigin(
       accuracy: location.fix.accuracy,
     }
   }
-  return { ...areaOrigin(destinationId ?? DEMO_AREA.destinationId), source: 'fallback', accuracy: null }
+  return { ...areaOrigin(destinationId ?? DEFAULT_CITY.destinationId), source: 'fallback', accuracy: null }
 }
 
 /** Origin for itinerary generation: destination city unless GPS is already there. */

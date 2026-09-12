@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { placesForDestination } from '@/data/places'
+import { getDestination } from '@/data/destinations'
 import { PlacesBrowser, type PlaceFilter } from '@/components/places/PlacesBrowser'
 import { useAppStore } from '@/store/useAppStore'
 import type { Place } from '@/types'
@@ -27,18 +28,19 @@ export function ExplorePage() {
   const loading = useAppStore((s) => s.nearbyLoading)
   const error = useAppStore((s) => s.nearbyError)
   const refresh = useAppStore((s) => s.refreshNearby)
+  const dest = getDestination(destId)
   const catalog = destId === 'vizag' ? placesForDestination('vizag') : []
   const seen = new Set<string>()
   const places = [...nearby, ...catalog].filter(browseable).filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)))
 
   useEffect(() => {
-    void refresh()
-  }, [refresh])
+    void refresh(true)
+  }, [destId, refresh])
 
   return (
     <PlacesBrowser
       title="Explore Nearby"
-      subtitle="Real OpenStreetMap places around Visakhapatnam. Missing fields stay unavailable."
+      subtitle={`OpenStreetMap places around ${dest.name}. Missing fields stay unavailable.`}
       filters={FILTERS}
       places={places}
       loading={loading}

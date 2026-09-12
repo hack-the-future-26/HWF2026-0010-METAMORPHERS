@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { getPlace, placesForDestination } from '@/data/places'
+import { getDestination } from '@/data/destinations'
 import { PlacesBrowser } from '@/components/places/PlacesBrowser'
 import { useAppStore } from '@/store/useAppStore'
 import { LIVE_TRAFFIC_UNAVAILABLE } from '@/lib/osmCopy'
@@ -16,14 +17,15 @@ const transport = (p: Place) =>
 
 export function TransportPage() {
   const nearby = useAppStore((s) => s.nearbyPlaces)
-  const destId = useAppStore((s) => s.planner.destinationId) ?? 'vizag'
+  const destId = useAppStore((s) => s.trip?.destinationId ?? s.planner.destinationId) ?? 'vizag'
+  const dest = getDestination(destId)
   const loading = useAppStore((s) => s.nearbyLoading)
   const error = useAppStore((s) => s.nearbyError)
   const refresh = useAppStore((s) => s.refreshNearby)
   const catalog =
     destId === 'vizag'
       ? [
-          ...hubs.map((id) => getPlace(id)).filter(Boolean) as Place[],
+          ...(hubs.map((id) => getPlace(id)).filter(Boolean) as Place[]),
           ...placesForDestination('vizag').filter(transport),
         ]
       : nearby.filter(transport)
@@ -33,15 +35,15 @@ export function TransportPage() {
   )
 
   useEffect(() => {
-    if (!nearby.length) void refresh(true)
-  }, [nearby.length, refresh])
+    void refresh(true)
+  }, [destId, refresh])
 
   return (
     <div>
       <p className="mx-auto mb-2 max-w-6xl text-xs text-ink-400">{LIVE_TRAFFIC_UNAVAILABLE}</p>
       <PlacesBrowser
         title="Transport"
-        subtitle="Airport, railway and bus points around Visakhapatnam. Use Navigate for OSRM/road directions."
+        subtitle={`Airport, railway and bus points around ${dest.name}. Use Navigate for road directions.`}
         filters={[{ id: 'all', label: '🚌 Hubs', match: transport }]}
         places={places}
         loading={loading}

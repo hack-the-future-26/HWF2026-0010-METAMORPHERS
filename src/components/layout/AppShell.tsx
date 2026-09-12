@@ -1,9 +1,8 @@
 import { Sparkles, WifiOff } from 'lucide-react'
 import { Outlet, useNavigate } from 'react-router-dom'
-import { Toaster, toast } from 'sonner'
+import { Toaster } from 'sonner'
 import { useEffect } from 'react'
 import { BottomNav, Sidebar, TopBar } from './Nav'
-import { DemoPanel } from './DemoPanel'
 import { AIAssistant } from '@/components/ai/AIAssistant'
 import { NotificationCenter } from '@/components/notifications/NotificationCenter'
 import { ActivityModal } from '@/components/trip/ActivityModal'
@@ -81,7 +80,7 @@ export function AppShell() {
   const showLocBanner = permission === 'denied' || permission === 'unsupported' || permission === 'timeout'
 
   return (
-    <div className="flex min-h-svh bg-sand-100 text-ink-900 dark:bg-[#0b1113] dark:text-sand-100">
+    <div className="flex min-h-svh bg-sand-100 text-ink-900 app-canvas dark:bg-[#0b1113] dark:text-sand-100">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
@@ -119,20 +118,13 @@ export function AppShell() {
       </div>
       <BottomNav />
       <button
-        onClick={() => {
-          if (!online) {
-            toast.error('Assistant needs a connection. Offline pack is still available.')
-            return
-          }
-          setAiOpen(true)
-        }}
-        className="fixed bottom-24 left-4 z-40 grid size-14 place-items-center rounded-full bg-teal-800 text-white shadow-float pulse-live lg:bottom-6 lg:left-auto lg:right-56"
+        onClick={() => setAiOpen(true)}
+        className="fixed bottom-24 left-4 z-40 grid size-14 place-items-center rounded-full bg-gradient-to-br from-sunset-500 via-teal-600 to-teal-900 text-white shadow-float pulse-live lg:bottom-6 lg:left-auto lg:right-8"
         aria-label="Open YatraSense AI"
       >
         <Sparkles className="size-6" />
       </button>
       <LocationPrompt />
-      <DemoPanel />
       <AIAssistant />
       <NotificationCenter />
       <ActivityModal />

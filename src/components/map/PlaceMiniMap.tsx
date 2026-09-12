@@ -1,5 +1,6 @@
-import { MapContainer, Marker, TileLayer } from 'react-leaflet'
+import { MapContainer, Marker, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
+import { useEffect } from 'react'
 import { mapsService } from '@/services/mapsService'
 
 const pin = L.divIcon({
@@ -8,6 +9,15 @@ const pin = L.divIcon({
   iconSize: [18, 18],
   iconAnchor: [9, 9],
 })
+
+function Invalidate() {
+  const map = useMap()
+  useEffect(() => {
+    const t = window.setTimeout(() => map.invalidateSize(), 60)
+    return () => window.clearTimeout(t)
+  }, [map])
+  return null
+}
 
 export function PlaceMiniMap({ lat, lng }: { lat: number; lng: number }) {
   return (
@@ -22,6 +32,7 @@ export function PlaceMiniMap({ lat, lng }: { lat: number; lng: number }) {
         zoomControl={false}
       >
         <TileLayer attribution={mapsService.attribution} url={mapsService.lightTiles} />
+        <Invalidate />
         <Marker position={[lat, lng]} icon={pin} />
       </MapContainer>
     </div>

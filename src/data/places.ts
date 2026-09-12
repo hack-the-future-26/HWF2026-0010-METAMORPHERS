@@ -980,5 +980,5 @@ export function placesForDestination(destinationId: string) {
 }
 
 /** Fallback only — never the primary GPS source. */
-export const FALLBACK_LOCATION = { lat: 17.7108, lng: 83.3162, label: 'Beach Road, Visakhapatnam' }
+export const FALLBACK_LOCATION = { lat: 17.7041, lng: 83.2977, label: 'Visakhapatnam, Andhra Pradesh' }
 export const CURRENT_LOCATION = FALLBACK_LOCATION

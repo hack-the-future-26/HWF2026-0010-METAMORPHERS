@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { placesForDestination } from '@/data/places'
+import { getDestination } from '@/data/destinations'
 import { PlacesBrowser } from '@/components/places/PlacesBrowser'
 import { useAppStore } from '@/store/useAppStore'
 import type { Place } from '@/types'
@@ -14,7 +15,8 @@ const foody = (p: Place) =>
 
 export function FoodPage() {
   const nearby = useAppStore((s) => s.nearbyPlaces)
-  const destId = useAppStore((s) => s.planner.destinationId) ?? 'vizag'
+  const destId = useAppStore((s) => s.trip?.destinationId ?? s.planner.destinationId) ?? 'vizag'
+  const dest = getDestination(destId)
   const loading = useAppStore((s) => s.nearbyLoading)
   const error = useAppStore((s) => s.nearbyError)
   const refresh = useAppStore((s) => s.refreshNearby)
@@ -23,13 +25,13 @@ export function FoodPage() {
   const places = [...nearby.filter(foody), ...catalog].filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)))
 
   useEffect(() => {
-    if (!nearby.length) void refresh(true)
-  }, [nearby.length, refresh])
+    void refresh(true)
+  }, [destId, refresh])
 
   return (
     <PlacesBrowser
       title="Find Food"
-      subtitle="Restaurants, cafes and food places from OpenStreetMap around Visakhapatnam."
+      subtitle={`Restaurants, cafes and food places from OpenStreetMap around ${dest.name}.`}
       filters={[
         { id: 'all', label: '🍴 All', match: foody },
         { id: 'cafe', label: '☕ Cafe', match: (p) => p.category === 'cafe' || p.nearbyKind === 'cafe' },

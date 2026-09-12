@@ -109,6 +109,8 @@ export interface Destination {
   lat: number
   lng: number
   timezone: string
+  famousFor?: string
+  highlights?: string[]
 }
 
 export interface Place {

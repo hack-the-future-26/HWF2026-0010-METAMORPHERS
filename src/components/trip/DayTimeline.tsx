@@ -13,10 +13,10 @@ import { toast } from 'sonner'
 import { useNavigate } from 'react-router-dom'
 import type { Activity } from '@/types'
 import { getPlace } from '@/data/places'
-import { crowdOf, useAppStore } from '@/store/useAppStore'
-import { CrowdDot } from '@/components/ui/Feedback'
+import { useAppStore } from '@/store/useAppStore'
 import { formatDuration, formatKm, formatInr } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
+import { PlaceImage } from '@/components/ui/PlaceImage'
 
 export function DayTimeline({ dayIndex }: { dayIndex: number }) {
   const trip = useAppStore((s) => s.trip)
@@ -67,8 +67,6 @@ function SortableActivity({ activity }: { activity: Activity }) {
     id: activity.id,
   })
   const select = useAppStore((s) => s.setSelectedPlace)
-  const conditions = useAppStore((s) => s.conditions)
-  const appMode = useAppStore((s) => s.appMode)
   const remove = useAppStore((s) => s.removeActivity)
   const replace = useAppStore((s) => s.replaceActivity)
   const goTo = useAppStore((s) => s.goToPlace)
@@ -102,11 +100,7 @@ function SortableActivity({ activity }: { activity: Activity }) {
             <span>⏱ {formatDuration(duration)}</span>
             <span>🚗 {activity.travelFromPrevMin ? `${activity.travelFromPrevMin} min` : 'Travel time unavailable'}</span>
             <span>📏 {activity.travelFromPrevKm ? formatKm(activity.travelFromPrevKm) : 'Distance unavailable'}</span>
-            {place && appMode === 'demo' && place.crowdKnown !== false ? (
-              <CrowdDot level={crowdOf(place, conditions.crowdOverrides)} />
-            ) : (
-              <span>Live crowd data unavailable</span>
-            )}
+            <span>Live crowd data unavailable</span>
             <span>{place?.priceKnown !== true || !activity.cost ? 'Price unavailable' : formatInr(activity.cost)}</span>
           </div>
         </button>
@@ -150,7 +144,15 @@ function SortableActivity({ activity }: { activity: Activity }) {
           </Button>
         </div>
       </div>
-      {place?.image && <img src={place.image} alt="" className="size-16 rounded-2xl object-cover" />}
+      {place && (
+        <PlaceImage
+          src={place.image}
+          name={place.name}
+          lat={place.lat}
+          lng={place.lng}
+          imgClassName="size-16 rounded-2xl"
+        />
+      )}
     </article>
   )
 }

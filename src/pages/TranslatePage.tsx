@@ -1,66 +1,148 @@
 import { useState } from 'react'
+import { ArrowLeftRight, Copy, Languages, Volume2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/Button'
+import { Card } from '@/components/ui/Card'
+import { TRANSLATE_LANGS, translateText, type TranslateLang } from '@/services/translateService'
 
-const LANGS = [
-  { id: 'en', label: 'English' },
-  { id: 'te', label: 'Telugu' },
-  { id: 'hi', label: 'Hindi' },
-] as const
-
-const PHRASES: { en: string; te: string; hi: string }[] = [
-  { en: 'Where is the hotel?', te: '\u0C39\u0C4B\u0C1F\u0C32\u0C4D \u0C0E\u0C15\u0C4D\u0C15\u0C21 \u0C09\u0C02\u0C26\u0C3F?', hi: '\u0939\u094B\u091F\u0932 \u0915\u0939\u093E\u0901 \u0939\u0948?' },
-  { en: 'How much does this cost?', te: '\u0C07\u0C26\u0C3F \u0C0E\u0C02\u0C24?', hi: '\u0907\u0938\u0915\u0940 \u0915\u0940\u092E\u0924 \u0915\u094D\u092F\u093E \u0939\u0948?' },
-  { en: 'Where is the railway station?', te: '\u0C30\u0C48\u0C32\u0C4D\u0C35\u0C47 \u0C38\u0C4D\u0C1F\u0C47\u0C37\u0C28\u0C4D \u0C0E\u0C15\u0C4D\u0C15\u0C21 \u0C09\u0C02\u0C26\u0C3F?', hi: '\u0930\u0947\u0932\u0935\u0947 \u0938\u094D\u091F\u0947\u0936\u0928 \u0915\u0939\u093E\u0901 \u0939\u0948?' },
-  { en: 'I need help.', te: '\u0C28\u0C3E\u0C15\u0C41 \u0C38\u0C39\u0C3E\u0C2F\u0C02 \u0C15\u0C3E\u0C35\u0C3E\u0C32\u0C3F.', hi: '\u092E\u0941\u091D\u0947 \u092E\u0926\u0926 \u091A\u093E\u0939\u093F\u090F\u0964' },
-  { en: 'Where is the restroom?', te: '\u0C35\u0C3F\u0C36\u0C4D\u0C30\u0C3E\u0C02\u0C24\u0C3F \u0C17\u0C26\u0C3F \u0C0E\u0C15\u0C4D\u0C15\u0C21 \u0C09\u0C02\u0C26\u0C3F?', hi: '\u0936\u094C\u091A\u093E\u0932\u092F \u0915\u0939\u093E\u0901 \u0939\u0948?' },
-  { en: 'Please take me here.', te: '\u0C26\u0C2F\u0C1A\u0C47\u0C38\u0C3F \u0C28\u0C28\u0C4D\u0C28\u0C41 \u0C07\u0C15\u0C4D\u0C15\u0C21\u0C3F\u0C15\u0C3F \u0C24\u0C40\u0C38\u0C41\u0C15\u0C46\u0C33\u0C4D\u0C33\u0C02\u0C21\u0C3F.', hi: '\u0915\u0943\u092A\u092F\u093E \u092E\u0941\u091D\u0947 \u092F\u0939\u093E\u0901 \u0932\u0947 \u091A\u0932\u093F\u090F\u0964' },
+const PHRASES = [
+  'Where is the hotel?',
+  'How much does this cost?',
+  'Where is the railway station?',
+  'I need help.',
+  'Where is the restroom?',
+  'Please take me here.',
+  'Is vegetarian food available?',
+  'Can I have the bill?',
 ]
 
 export function TranslatePage() {
-  const [lang, setLang] = useState<(typeof LANGS)[number]['id']>('te')
+  const [from, setFrom] = useState<TranslateLang>('en')
+  const [to, setTo] = useState<TranslateLang>('hi')
+  const [input, setInput] = useState('Where is the hotel?')
+  const [output, setOutput] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const run = async (text = input) => {
+    const q = text.trim()
+    if (!q) return
+    setBusy(true)
+    try {
+      const translated = await translateText(q, from, to)
+      setOutput(translated)
+    } catch {
+      toast.error('Translation is unavailable right now. Try again in a moment.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const speak = (text: string, lang: string) => {
+    if (!text || !window.speechSynthesis) return
+    const utter = new SpeechSynthesisUtterance(text)
+    utter.lang = lang === 'en' ? 'en-IN' : `${lang}-IN`
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utter)
+  }
 
   return (
     <div className="mx-auto max-w-3xl">
-      <h1 className="font-display text-4xl">Travel phrases</h1>
-      <p className="mt-2 text-sm text-ink-500">Need help communicating?</p>
-      <div className="mt-5 flex gap-2">
-        {LANGS.map((l) => (
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sunset-600">Travel translator</p>
+      <h1 className="mt-1 font-display text-4xl">Speak the city</h1>
+      <p className="mt-2 text-sm text-ink-500">Live translation for Indian languages. Tap a phrase or type your own.</p>
+
+      <div className="mt-5 flex flex-wrap gap-2">
+        {PHRASES.map((p) => (
           <button
-            key={l.id}
-            onClick={() => setLang(l.id)}
-            className={`rounded-full px-4 py-2 text-sm ${lang === l.id ? 'bg-teal-800 text-white' : 'bg-white dark:bg-ink-800'}`}
+            key={p}
+            onClick={() => {
+              setInput(p)
+              void run(p)
+            }}
+            className="rounded-full bg-white px-3 py-1.5 text-xs shadow-card ring-1 ring-sand-200 hover:bg-sand-50 dark:bg-ink-800 dark:ring-white/10"
           >
-            {l.label}
+            {p}
           </button>
         ))}
       </div>
-      <div className="mt-6 space-y-3">
-        {PHRASES.map((p) => {
-          const text = p[lang]
-          return (
-            <div
-              key={p.en}
-              className="flex items-center justify-between gap-3 rounded-3xl bg-white p-4 shadow-card dark:bg-ink-800"
+
+      <Card className="mt-6 p-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={from}
+            onChange={(e) => setFrom(e.target.value as TranslateLang)}
+            className="h-10 rounded-full bg-sand-100 px-3 text-sm dark:bg-white/8"
+          >
+            {TRANSLATE_LANGS.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+          <button
+            className="grid size-10 place-items-center rounded-full bg-teal-50 text-teal-800 dark:bg-teal-950 dark:text-teal-200"
+            onClick={() => {
+              setFrom(to)
+              setTo(from)
+              setInput(output || input)
+              setOutput(input)
+            }}
+            aria-label="Swap languages"
+          >
+            <ArrowLeftRight className="size-4" />
+          </button>
+          <select
+            value={to}
+            onChange={(e) => setTo(e.target.value as TranslateLang)}
+            className="h-10 rounded-full bg-sand-100 px-3 text-sm dark:bg-white/8"
+          >
+            {TRANSLATE_LANGS.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          rows={4}
+          placeholder="Type a sentence…"
+          className="mt-4 w-full resize-none rounded-3xl bg-sand-100 p-4 text-sm outline-none ring-1 ring-transparent focus:ring-teal-600 dark:bg-white/5"
+        />
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button onClick={() => void run()} disabled={busy || !input.trim()}>
+            <Languages className="size-4" />
+            {busy ? 'Translating…' : 'Translate'}
+          </Button>
+          <Button variant="ghost" onClick={() => speak(input, from)} disabled={!input}>
+            <Volume2 className="size-4" /> Listen
+          </Button>
+        </div>
+      </Card>
+
+      {output && (
+        <Card className="mt-4 p-5">
+          <p className="text-xs uppercase tracking-[0.16em] text-ink-400">Translation</p>
+          <p className="mt-2 text-lg leading-relaxed">{output}</p>
+          <div className="mt-4 flex gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                void navigator.clipboard.writeText(output)
+                toast.success('Copied')
+              }}
             >
-              <div>
-                <p className="text-xs text-ink-400">{p.en}</p>
-                <p className="mt-1 font-medium">{text}</p>
-              </div>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  void navigator.clipboard.writeText(text)
-                  toast.success('Copied')
-                }}
-              >
-                Copy
-              </Button>
-            </div>
-          )
-        })}
-      </div>
+              <Copy className="size-4" /> Copy
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => speak(output, to)}>
+              <Volume2 className="size-4" /> Listen
+            </Button>
+          </div>
+        </Card>
+      )}
     </div>
   )
 }

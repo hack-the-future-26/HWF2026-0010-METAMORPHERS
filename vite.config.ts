@@ -14,12 +14,22 @@ export default defineConfig({
       closeBundle() {
         const index = path.resolve('dist/index.html')
         if (fs.existsSync(index)) fs.copyFileSync(index, path.resolve('dist/404.html'))
+        fs.writeFileSync(path.resolve('dist/.nojekyll'), '')
       },
     },
   ],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
+    },
+  },
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true,
+      },
     },
   },
 })

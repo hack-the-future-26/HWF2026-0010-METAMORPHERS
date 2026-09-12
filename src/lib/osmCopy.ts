@@ -8,6 +8,23 @@ export const PRICE_UNAVAILABLE = 'Price unavailable'
 export const WEATHER_UNAVAILABLE = 'Live weather is temporarily unavailable.'
 export const ROUTING_UNAVAILABLE = 'Route calculation is temporarily unavailable.'
 export const DESTINATION_NOT_FOUND = "We couldn't find that destination. Try another city or landmark."
-export const GPS_DENIED =
-  'Location access is disabled. Enable location permission to use live trip tracking.'
+export const GPS_DENIED = 'GPS unavailable. Continuing with planned route.'
+export const RATING_UNAVAILABLE = 'Rating unavailable'
+export const HOURS_UNAVAILABLE = 'Opening hours unavailable'
+
+export function honestRating(place: { rating: number; ratingKnown?: boolean }, liveMode: boolean) {
+  if (liveMode) return place.ratingKnown === true ? `⭐ ${place.rating}` : RATING_UNAVAILABLE
+  return place.rating > 0 ? `⭐ ${place.rating}` : RATING_UNAVAILABLE
+}
+
+export function honestHours(place: { openingHours?: string; hoursKnown?: boolean; bestTime?: string }) {
+  if (place.hoursKnown !== true) return HOURS_UNAVAILABLE
+  return place.openingHours || place.bestTime || HOURS_UNAVAILABLE
+}
+
+export function honestPrice(place: { entryFee?: number; estimatedCost?: number; priceKnown?: boolean }) {
+  if (place.priceKnown !== true) return PRICE_UNAVAILABLE
+  const n = place.entryFee || place.estimatedCost || 0
+  return n ? `₹${n}` : PRICE_UNAVAILABLE
+}
 export const OFF_ROUTE_MESSAGE = 'You appear to be off route. Recalculating...'

@@ -1,16 +1,17 @@
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { crowdOf, spentTotal, useAppStore } from '@/store/useAppStore'
+import { spentTotal, useAppStore } from '@/store/useAppStore'
 import { getPlace } from '@/data/places'
 import { rankPlaces } from '@/lib/recommend'
 import { activeOrigin } from '@/lib/origin'
-import { crowdLabel, formatKm, formatInr, haversineKm } from '@/lib/utils'
+import { formatKm, formatInr, haversineKm } from '@/lib/utils'
 import type { NearbyKind } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/Feedback'
 import { AdaptationCard } from '@/components/trip/ShareTripModal'
 import { SafetyPanel } from '@/components/safety/SOSModal'
 import { TripMap } from '@/components/map/TripMap'
+import { PlaceImage } from '@/components/ui/PlaceImage'
 import { toast } from 'sonner'
 
 const NEAR: { id: NearbyKind; label: string; icon: string }[] = [
@@ -30,8 +31,6 @@ export function LiveTripPage() {
   const start = useAppStore((s) => s.startTrip)
   const conditions = useAppStore((s) => s.conditions)
   const expenses = useAppStore((s) => s.expenses)
-  const crowdSuggestion = useAppStore((s) => s.crowdSuggestion)
-  const acceptCrowd = useAppStore((s) => s.acceptCrowdMove)
   const select = useAppStore((s) => s.setSelectedPlace)
   const nearbyFilter = useAppStore((s) => s.nearbyFilter)
   const setNearby = useAppStore((s) => s.setNearby)
@@ -43,7 +42,6 @@ export function LiveTripPage() {
   const nearbyPlaces = useAppStore((s) => s.nearbyPlaces)
   const nearbyLoading = useAppStore((s) => s.nearbyLoading)
   const liveRoute = useAppStore((s) => s.liveRoute)
-  const appMode = useAppStore((s) => s.appMode)
   const requestLocation = useAppStore((s) => s.requestLocation)
   const offRoute = useAppStore((s) => s.offRoute)
   const rerouting = useAppStore((s) => s.rerouting)
@@ -54,7 +52,9 @@ export function LiveTripPage() {
 
   const day = trip?.daysPlan[0]
   const nextAct = day?.activities.find((a) => a.kind === 'place')
-  const next = nextAct?.placeId ? getPlace(nextAct.placeId) : undefined
+  const next = nextAct?.placeId
+    ? (getPlace(nextAct.placeId) ?? nearbyPlaces.find((p) => p.id === nextAct.placeId))
+    : undefined
 
   const ranked = useMemo(() => {
     const pool = nearbyPlaces.length ? nearbyPlaces : []
@@ -62,7 +62,9 @@ export function LiveTripPage() {
   }, [nearbyPlaces, origin.lat, origin.lng, trip, conditions, remaining])
 
   const top = ranked[0]
-  const nextMovePlace = top ? getPlace(top.score.placeId) : next
+  const nextMovePlace = top
+    ? (getPlace(top.score.placeId) ?? nearbyPlaces.find((p) => p.id === top.score.placeId) ?? next)
+    : next
 
   const nearby = useMemo(() => {
     let list = nearbyPlaces
@@ -92,7 +94,7 @@ export function LiveTripPage() {
           Live mode starts GPS tracking, watches weather, and keeps your next stop in sync.
         </p>
         <Button className="mt-6" size="lg" onClick={start}>
-          Enter Live Trip Mode
+          Start Trip
         </Button>
       </div>
     )
@@ -105,7 +107,7 @@ export function LiveTripPage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-teal-700">Live Trip Mode</p>
+          <p className="text-xs uppercase tracking-[0.18em] text-teal-700">🟢 Trip Active</p>
           <h1 className="font-display text-4xl">
             {location.loading ? 'Getting your location...' : 'You’re here 📍'}
           </h1>
@@ -121,7 +123,7 @@ export function LiveTripPage() {
           )}
           {origin.source !== 'gps' && (
             <p className="text-xs text-ink-400">
-              Using {origin.source === 'destination' ? 'destination' : 'fallback'} ·{' '}
+              GPS unavailable. Continuing with planned route.{' '}
               <button className="underline" onClick={() => void requestLocation()}>
                 Allow location
               </button>
@@ -130,9 +132,6 @@ export function LiveTripPage() {
         </div>
         <div className="flex gap-2">
           {!online && <span className="rounded-full bg-ink-900 px-3 py-1 text-xs text-white">Offline — saved info</span>}
-          <span className={`rounded-full px-3 py-1 text-xs ${appMode === 'real' ? 'bg-teal-800 text-white' : 'bg-ink-900 text-sunset-400'}`}>
-            {appMode === 'real' ? 'LIVE MODE' : 'DEMO MODE'}
-          </span>
         </div>
       </div>
 
@@ -182,21 +181,15 @@ export function LiveTripPage() {
               </li>
               <li>🌧️ Rain probability: {conditions.weather.rainProbability}%</li>
               <li>
-                🚦 Traffic:{' '}
-                {appMode === 'demo'
-                  ? `${conditions.traffic === 'heavy' ? 'Heavy' : conditions.traffic === 'clear' ? 'Clear' : 'Moderate'} (simulated)`
-                  : 'Live traffic unavailable'}
+                🚦 Traffic: Live traffic unavailable
               </li>
               <li>
-                👥 Crowd:{' '}
-                {appMode === 'demo' && next
-                  ? crowdLabel(crowdOf(next, conditions.crowdOverrides)) + ' (simulated)'
-                  : 'Live crowd data unavailable'}
+                👥 Crowd: Live crowd data unavailable
               </li>
               <li>
                 🕐 Opening status:{' '}
-                {next?.hoursKnown === false
-                  ? 'Not available from OSM'
+                {next?.hoursKnown !== true
+                  ? 'Opening hours unavailable'
                   : conditions.closures.includes(next?.id ?? '')
                     ? 'Closed'
                     : next
@@ -220,20 +213,6 @@ export function LiveTripPage() {
       </div>
 
       <AdaptationCard />
-
-      {crowdSuggestion && appMode === 'demo' && (
-        <div className="rounded-3xl bg-amber-50 p-5 dark:bg-amber-500/10">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">Simulated crowd</p>
-          <p className="font-medium">
-            {crowdSuggestion.original.title} · 🔴 High
-          </p>
-          <p className="mt-1 text-sm">{crowdSuggestion.message}</p>
-          <p className="mt-1 text-sm text-ink-500">Recommendation: {crowdSuggestion.reason}</p>
-          <Button className="mt-3" onClick={acceptCrowd}>
-            Move to 7:30 AM
-          </Button>
-        </div>
-      )}
 
       <div className="rounded-3xl bg-white p-5 shadow-card dark:bg-ink-800">
         <p className="text-xs uppercase tracking-[0.16em] text-ink-400">Your Best Next Move</p>
@@ -296,17 +275,13 @@ export function LiveTripPage() {
               onClick={() => select(p.id)}
               className="flex items-center gap-3 rounded-3xl bg-white p-3 text-left shadow-card dark:bg-ink-800"
             >
-              {p.image ? (
-                <img src={p.image} alt="" className="size-14 rounded-2xl object-cover" />
-              ) : (
-                <div className="grid size-14 place-items-center rounded-2xl bg-teal-50 text-lg dark:bg-teal-950">📍</div>
-              )}
+              <PlaceImage src={p.image} name={p.name} lat={p.lat} lng={p.lng} category={p.category} imgClassName="size-14 rounded-2xl" />
               <span>
                 <span className="block font-medium">{p.name}</span>
                 <span className="text-xs text-ink-500">
                   {formatKm(haversineKm(origin, p))}
-                  {p.ratingKnown === false ? ' · Not available from OSM' : ` · ⭐ ${p.rating}`}
-                  {p.priceKnown === false ? '' : p.estimatedCost ? ` · ${formatInr(p.estimatedCost)}` : ''}
+                  {p.ratingKnown === true ? ` · ⭐ ${p.rating}` : ' · Rating unavailable'}
+                  {p.priceKnown !== true ? ' · Price unavailable' : p.estimatedCost ? ` · ${formatInr(p.estimatedCost)}` : ''}
                 </span>
               </span>
             </button>

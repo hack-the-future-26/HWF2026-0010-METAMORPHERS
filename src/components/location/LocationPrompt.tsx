@@ -9,7 +9,7 @@ export function LocationPrompt() {
   const request = useAppStore((s) => s.requestLocation)
   const fallback = useAppStore((s) => s.useDestinationFallback)
 
-  const open = permission === 'unset' || permission === 'prompting'
+  const open = permission === 'prompting'
 
   if (!open) return null
 

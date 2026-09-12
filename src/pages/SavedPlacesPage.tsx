@@ -5,6 +5,7 @@ import { useAppStore } from '@/store/useAppStore'
 import type { SavedList } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/Feedback'
+import { PlaceImage } from '@/components/ui/PlaceImage'
 import { toast } from 'sonner'
 
 const TABS: { id: SavedList; label: string }[] = [
@@ -68,11 +69,7 @@ export function SavedPlacesPage() {
             }
             return (
               <article key={s.placeId} className="flex gap-3 rounded-3xl bg-white p-3 shadow-card dark:bg-ink-800">
-                {p.image ? (
-                  <img src={p.image} alt="" className="h-20 w-24 rounded-2xl object-cover" />
-                ) : (
-                  <div className="grid h-20 w-24 place-items-center rounded-2xl bg-teal-50 text-lg dark:bg-teal-950">📍</div>
-                )}
+                <PlaceImage src={p.image} name={p.name} lat={p.lat} lng={p.lng} category={p.category} imgClassName="h-20 w-24 rounded-2xl" />
                 <div className="min-w-0 flex-1">
                   <button className="font-medium" onClick={() => select(p.id)}>
                     {p.name}

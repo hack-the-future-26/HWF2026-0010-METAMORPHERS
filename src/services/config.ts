@@ -10,8 +10,9 @@ export const API = {
   osrmUrl: import.meta.env.VITE_OSRM_URL ?? import.meta.env.VITE_ROUTING_API_URL ?? 'https://router.project-osrm.org',
   eventsUrl: import.meta.env.VITE_EVENTS_API_URL,
   crowdUrl: import.meta.env.VITE_CROWD_API_URL,
-  /** Public backend URL only — never a model secret. */
-  aiUrl: import.meta.env.VITE_AI_API_URL,
+  translateUrl: import.meta.env.VITE_TRANSLATE_API_URL || '/api/translate',
+  /** Local companion API by default — override with a hosted LLM later. */
+  aiUrl: import.meta.env.VITE_AI_API_URL || '/api/ask',
   aiModel: import.meta.env.VITE_AI_MODEL,
 }
 

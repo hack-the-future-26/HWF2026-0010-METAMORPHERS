@@ -2,13 +2,23 @@ import { getPlace, placesForDestination } from '@/data/places'
 import type { Activity, AdaptationSuggestion, Place, Trip, WeatherSnapshot } from '@/types'
 import { uid } from '@/lib/utils'
 
-function dayActivities(trip: Trip, dayIndex = 0) {
-  return trip.daysPlan[dayIndex]?.activities ?? []
+function resolvePlace(act: Activity, nearby: Place[] = []) {
+  return (act.placeId ? getPlace(act.placeId) : undefined) ?? nearby.find((p) => p.id === act.placeId)
 }
 
-function outdoorStop(act: Activity) {
-  const p = act.placeId ? getPlace(act.placeId) : undefined
-  return Boolean(p && p.indoor === false && (p.weatherSensitive || p.styles.includes('beaches') || p.styles.includes('nature')))
+function outdoorStop(act: Activity, nearby: Place[] = []) {
+  const p = resolvePlace(act, nearby)
+  if (p && p.indoor === false && (p.weatherSensitive || p.styles.includes('beaches') || p.styles.includes('nature'))) {
+    return true
+  }
+  const blob = `${act.title} ${act.subtitle ?? ''}`.toLowerCase()
+  return /beach|park|garden|viewpoint|boating|statue/.test(blob)
+}
+
+function dayActivities(trip: Trip, nearby: Place[] = [], dayIndex = 0) {
+  const one = trip.daysPlan[dayIndex]?.activities ?? []
+  if (one.some((a) => outdoorStop(a, nearby))) return one
+  return trip.daysPlan.flatMap((d) => d.activities)
 }
 
 function indoorBackup(destinationId: string, avoid: string[]) {
@@ -31,7 +41,8 @@ function indoorAlternative(nearby: Place[], avoid: string[], destId: string, dem
       (p.category === 'attraction' || p.category === 'cafe' || p.category === 'restaurant' || p.category === 'shopping'),
   )
   if (nearbyIndoor) return nearbyIndoor
-  if (!demoMode) return undefined
+  if (destId !== 'vizag' && !demoMode) return undefined
+  if (getPlace('sai-priya') && !avoid.includes('sai-priya')) return getPlace('sai-priya')
   if (getPlace('submarine') && !avoid.includes('submarine')) return getPlace('submarine')
   if (getPlace('aircraft-museum') && !avoid.includes('aircraft-museum')) return getPlace('aircraft-museum')
   return indoorBackup(destId, avoid) ?? getPlace('submarine')
@@ -67,7 +78,7 @@ export function adaptItinerary(opts: {
 }): AdaptationSuggestion | null {
   const { itinerary, weather, availablePlaces, demoMode = false } = opts
   if (weather.unavailable) return null
-  const acts = dayActivities(itinerary)
+  const acts = dayActivities(itinerary, availablePlaces)
   const avoid = acts.map((a) => a.placeId).filter(Boolean) as string[]
   const rainy =
     weather.rainProbability >= 55 ||
@@ -77,16 +88,16 @@ export function adaptItinerary(opts: {
   const hot = (weather.apparentTempC ?? weather.tempC) >= 36 || weather.tempC >= 36
 
   if (rainy) {
-    const hit = acts.find(outdoorStop)
+    const hit = acts.find((a) => outdoorStop(a, availablePlaces))
     if (!hit) return null
     const alt = indoorAlternative(availablePlaces, avoid.filter((id) => id !== hit.placeId), itinerary.destinationId, demoMode)
     if (!alt) return null
     return suggestionForSwap(
       hit,
       alt,
-      'Weather alert',
-      `Rain is expected (${weather.rainProbability}% probability). Outdoor stops are being swapped for indoor ones.`,
-      `${alt.name} is indoor and a better fit for this weather.`,
+      '🌧️ Rain detected — itinerary adapted.',
+      `Rain is expected near your next stop. I've replaced ${hit.title} with ${alt.name} and recalculated your route.`,
+      `YatraSense adapted your journey to changing conditions. ${alt.name} is an indoor alternative.`,
     )
   }
 

@@ -1,13 +1,12 @@
 import { getPlace } from '@/data/places'
-import { crowdOf, useAppStore } from '@/store/useAppStore'
+import { useAppStore } from '@/store/useAppStore'
 import { activeOrigin } from '@/lib/origin'
 import { formatInr, formatKm, haversineKm, travelMinutes } from '@/lib/utils'
 import { whyRecommended } from '@/services/aiService'
 import { geocodingService } from '@/services/geocodingService'
-import { PlaceMiniMap } from '@/components/map/PlaceMiniMap'
+import { PlaceImage } from '@/components/ui/PlaceImage'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { CrowdDot } from '@/components/ui/Feedback'
 import { Modal } from '@/components/ui/Modal'
 import { toast } from 'sonner'
 import { useNavigate } from 'react-router-dom'
@@ -16,7 +15,8 @@ import { useEffect, useState } from 'react'
 export function ActivityModal() {
   const id = useAppStore((s) => s.selectedPlaceId)
   const set = useAppStore((s) => s.setSelectedPlace)
-  const place = id ? getPlace(id) : undefined
+  const nearbyPlaces = useAppStore((s) => s.nearbyPlaces)
+  const place = id ? (getPlace(id) ?? nearbyPlaces.find((p) => p.id === id)) : undefined
   const conditions = useAppStore((s) => s.conditions)
   const styles = useAppStore((s) => s.trip?.styles ?? s.user.preferences.styles)
   const save = useAppStore((s) => s.savePlace)
@@ -28,7 +28,6 @@ export function ActivityModal() {
   const location = useAppStore((s) => s.location)
   const trip = useAppStore((s) => s.trip)
   const liveRoute = useAppStore((s) => s.liveRoute)
-  const appMode = useAppStore((s) => s.appMode)
   const origin = activeOrigin(location, trip?.destinationId)
   const navigate = useNavigate()
   const [exactAddress, setExactAddress] = useState(place?.address ?? '')
@@ -52,24 +51,15 @@ export function ActivityModal() {
     nextId === place.id && liveRoute
       ? `${liveRoute.minutes} min ${liveRoute.source === 'osrm' ? 'by road' : 'estimate'}`
       : `${travelMinutes(km, 'taxi')} min by cab`
-  const crowd = crowdOf(place, conditions.crowdOverrides)
   const closed = conditions.closures.includes(place.id)
 
   return (
     <Modal open={Boolean(place)} onClose={() => set(null)} title={place.name} wide>
-      {place.image ? (
-        <img src={place.image} alt="" className="mb-4 h-52 w-full rounded-3xl object-cover" />
-      ) : (
-        <PlaceMiniMap lat={place.lat} lng={place.lng} />
-      )}
+      <PlaceImage src={place.image} name={place.name} city={origin.label} lat={place.lat} lng={place.lng} category={place.category} imgClassName="mb-4 h-52 w-full rounded-3xl" />
       <div className="mb-3 flex flex-wrap gap-2">
-        <Badge>{place.ratingKnown === false ? 'Rating unavailable' : `⭐ ${place.rating}`}</Badge>
+        <Badge>{place.ratingKnown === true ? `⭐ ${place.rating}` : 'Rating unavailable'}</Badge>
         <Badge tone="sand">{place.category}</Badge>
-        {appMode === 'demo' && place.crowdKnown !== false ? (
-          <CrowdDot level={crowd} />
-        ) : (
-          <Badge tone="sand">Live crowd data unavailable</Badge>
-        )}
+        <Badge tone="sand">Live crowd data unavailable</Badge>
         {closed && <Badge tone="red">Temporarily closed</Badge>}
         {place.source === 'osm' && <Badge tone="sand">OpenStreetMap</Badge>}
       </div>
@@ -77,7 +67,7 @@ export function ActivityModal() {
       <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
         <Info k="Location" v={`${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`} />
         <Info k="Address" v={exactAddress || `${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`} />
-        <Info k="Opening hours" v={place.hoursKnown === false ? 'Not available from OSM' : place.openingHours} />
+        <Info k="Opening hours" v={place.hoursKnown !== true ? 'Opening hours unavailable' : place.openingHours} />
         <Info
           k="Entry fee"
           v={place.priceKnown === false ? 'Price unavailable' : place.entryFee ? formatInr(place.entryFee) : 'Free'}

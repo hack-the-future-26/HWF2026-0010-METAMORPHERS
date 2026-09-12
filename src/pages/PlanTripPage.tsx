@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
 import { toast } from 'sonner'
+import { PlaceImage } from '@/components/ui/PlaceImage'
 
 export function PlanTripPage() {
   const planner = useAppStore((s) => s.planner)
@@ -62,23 +63,31 @@ export function PlanTripPage() {
         <Card className="mt-6 p-6 sm:p-8">
           {planner.step === 1 && (
             <Step title="Where do you want to go?">
+              <p className="mb-3 text-sm text-ink-500">Pick an Indian city. Coordinates are city-center WGS84.</p>
               <Input
                 value={planner.destinationQuery}
-                onChange={(e) => setPlanner({ destinationQuery: e.target.value, destinationId: null })}
-                placeholder="Search destination..."
+                onChange={(e) => {
+                  const q = e.target.value
+                  const hit = searchDestinations(q)[0]
+                  const vizag = q.toLowerCase().includes('visakh') || q.toLowerCase().includes('vizag')
+                  setPlanner({ destinationQuery: q, destinationId: vizag ? 'vizag' : hit && q.length >= 2 ? hit.id : planner.destinationId })
+                }}
+                placeholder="Delhi, Mumbai, Goa, Jaipur…"
               />
               {geoLoading && <p className="mt-2 text-xs text-ink-400">Searching OpenStreetMap…</p>}
-              <div className="mt-4 grid gap-3">
-                {results.map((d) => (
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {(planner.destinationQuery.trim().length < 2 ? searchDestinations('') : results).slice(0, 18).map((d) => (
                   <button
                     key={d.id}
                     onClick={() => setPlanner({ destinationId: d.id, destinationQuery: d.name, step: 2 })}
-                    className={`flex gap-3 rounded-2xl p-2 text-left ring-1 ${planner.destinationId === d.id ? 'ring-teal-700' : 'ring-transparent'} hover:bg-sand-100 dark:hover:bg-white/5`}
+                    className={`overflow-hidden rounded-2xl text-left ring-2 ${planner.destinationId === d.id ? 'ring-teal-700' : 'ring-transparent'} hover:ring-teal-600/40`}
                   >
-                    <img src={d.image} alt="" className="h-16 w-24 rounded-xl object-cover" />
-                    <span>
+                    <PlaceImage src={d.image} name={d.name} city={d.name} lat={d.lat} lng={d.lng} imgClassName="h-20 w-full" />
+                    <span className="block p-2">
                       <span className="block font-medium">{d.name}</span>
-                      <span className="text-xs text-ink-500">{d.tagline}</span>
+                      <span className="text-[11px] text-ink-500">
+                        {d.lat.toFixed(2)}°, {d.lng.toFixed(2)}°
+                      </span>
                     </span>
                   </button>
                 ))}

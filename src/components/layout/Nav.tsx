@@ -1,20 +1,27 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   Bookmark,
+  Bus,
   Compass,
+  Hotel,
+  Languages,
   LayoutDashboard,
   MapPinned,
   Radio,
   Route,
   Sparkles,
+  UtensilsCrossed,
   UserRound,
   Wallet,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useEffect, useState } from 'react'
+import { getDestination } from '@/data/destinations'
+import { backendHealth } from '@/services/backend'
 import { useAppStore } from '@/store/useAppStore'
 
 const items = [
-  { to: '/', label: 'Home', icon: LayoutDashboard },
+  { to: '/', label: 'Arrive', icon: LayoutDashboard },
   { to: '/plan', label: 'Plan', icon: Sparkles },
   { to: '/explore', label: 'Explore', icon: Compass },
   { to: '/trip', label: 'My Trip', icon: Route },
@@ -22,21 +29,31 @@ const items = [
 ]
 
 const extra = [
+  { to: '/food', label: 'Food', icon: UtensilsCrossed },
+  { to: '/stay', label: 'Stay', icon: Hotel },
+  { to: '/transport', label: 'Transport', icon: Bus },
+  { to: '/translate', label: 'Translate', icon: Languages },
   { to: '/budget', label: 'Budget', icon: Wallet },
   { to: '/saved', label: 'Saved', icon: Bookmark },
   { to: '/profile', label: 'Profile', icon: UserRound },
 ]
 
 export function Sidebar() {
+  const [apiOn, setApiOn] = useState<boolean | null>(null)
+  useEffect(() => {
+    void backendHealth()
+      .then(() => setApiOn(true))
+      .catch(() => setApiOn(false))
+  }, [])
   return (
-    <aside className="hidden lg:flex lg:w-[248px] lg:shrink-0 lg:flex-col lg:gap-6 lg:border-r lg:border-sand-200 lg:bg-white/80 lg:px-4 lg:py-5 lg:dark:border-white/8 lg:dark:bg-ink-900/80">
+    <aside className="hidden lg:flex lg:w-[260px] lg:shrink-0 lg:flex-col lg:gap-6 lg:border-r lg:border-sand-200/80 lg:bg-white/70 lg:px-4 lg:py-5 lg:backdrop-blur-xl lg:dark:border-white/8 lg:dark:bg-ink-900/70">
       <div className="flex items-center gap-2.5 px-2">
-        <div className="grid size-10 place-items-center rounded-2xl bg-teal-800 text-white shadow-float">
+        <div className="grid size-11 place-items-center rounded-2xl bg-gradient-to-br from-sunset-500 via-teal-600 to-teal-900 text-white shadow-float">
           <MapPinned className="size-5" />
         </div>
         <div>
           <p className="font-display text-lg leading-none">YatraSense</p>
-          <p className="mt-1 text-[11px] text-ink-400">Travel intelligence</p>
+          <p className="mt-1 text-[11px] text-ink-400">New-city companion</p>
         </div>
       </div>
       <nav className="flex flex-1 flex-col gap-1">
@@ -48,8 +65,12 @@ export function Sidebar() {
           <SideLink key={item.to} {...item} />
         ))}
       </nav>
-      <div className="rounded-2xl bg-teal-50 p-3 text-xs text-teal-900 dark:bg-teal-950 dark:text-teal-200">
-        Understand → Plan → Explore → Monitor → Adapt
+      <div className="rounded-2xl bg-gradient-to-br from-teal-50 via-white to-sunset-100/60 p-3 text-xs text-teal-900 dark:from-teal-950 dark:via-ink-800 dark:to-ink-800 dark:text-teal-200">
+        <p>New in town → Arrive → Plan → Walk</p>
+        <p className="mt-2 flex items-center gap-2 text-[11px]">
+          <span className={`size-1.5 rounded-full ${apiOn ? 'bg-live-500' : 'bg-ink-400'}`} />
+          {apiOn == null ? 'Checking companion…' : apiOn ? 'Companion API live' : 'API offline — run npm run dev'}
+        </p>
       </div>
     </aside>
   )
@@ -109,14 +130,21 @@ export function TopBar() {
   const toggleTheme = useAppStore((s) => s.toggleTheme)
   const setNotificationsOpen = useAppStore((s) => s.setNotificationsOpen)
   const user = useAppStore((s) => s.user)
-  const appMode = useAppStore((s) => s.appMode)
-  const setAppMode = useAppStore((s) => s.setAppMode)
   const loc = useAppStore((s) => s.location)
+  const destId = useAppStore((s) => s.planner.destinationId)
+  const destQuery = useAppStore((s) => s.planner.destinationQuery)
+  const liveStarted = useAppStore((s) => s.liveStarted)
+  const dest = destId ? getDestination(destId) : null
+  const areaLabel = dest
+    ? `📍 ${dest.name}${dest.state ? `, ${dest.state}` : ''}`
+    : destQuery
+      ? `📍 ${destQuery}`
+      : '📍 Choose a city'
 
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-sand-200/80 bg-sand-100/80 px-4 py-3 backdrop-blur-xl dark:border-white/8 dark:bg-[#0b1113]/80 lg:px-8">
       <button onClick={() => navigate('/')} className="flex items-center gap-2 lg:hidden">
-        <span className="grid size-8 place-items-center rounded-xl bg-teal-800 text-white">
+        <span className="grid size-8 place-items-center rounded-xl bg-gradient-to-br from-sunset-500 via-teal-600 to-teal-900 text-white">
           <MapPinned className="size-4" />
         </span>
         <span className="font-display">YatraSense</span>
@@ -124,17 +152,11 @@ export function TopBar() {
       <div className="min-w-0 flex-1 truncate text-[11px] text-ink-500 lg:text-sm">
         {loc.loading
           ? 'Getting your location...'
-          : loc.permission === 'granted' && loc.label
+          : liveStarted && loc.permission === 'granted' && loc.label
             ? `📍 You’re near ${loc.label}`
-            : 'Your trip. Your preferences. One intelligent plan.'}
+            : areaLabel}
       </div>
       <div className="ml-auto flex items-center gap-2">
-        <button
-          onClick={() => setAppMode(appMode === 'real' ? 'demo' : 'real')}
-          className={`rounded-full px-3 py-1.5 text-[11px] font-semibold tracking-wide ${appMode === 'real' ? 'bg-teal-800 text-white' : 'bg-ink-900 text-sunset-400'}`}
-        >
-          {appMode === 'real' ? 'LIVE MODE' : 'DEMO MODE'}
-        </button>
         <button
           onClick={toggleTheme}
           className="grid size-10 place-items-center rounded-full bg-white shadow-card dark:bg-ink-800"

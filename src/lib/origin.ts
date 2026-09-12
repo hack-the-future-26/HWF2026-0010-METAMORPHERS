@@ -2,9 +2,29 @@ import { PLACES } from '@/data/places'
 import { getDestination } from '@/data/destinations'
 import type { LocationState, Place } from '@/types'
 import { haversineKm } from '@/lib/utils'
+import { DEFAULT_CITY } from '@/lib/demoLocation'
 
-/** Neutral map center — never treated as the user's GPS or a destination. */
-const UNLOCATED = { lat: 20.5937, lng: 78.9629, label: 'Choose a destination to begin' }
+/** Discovery origin for the selected destination — city-center coordinates. */
+export function areaOrigin(destinationId?: string | null): {
+  lat: number
+  lng: number
+  label: string
+  source: 'destination'
+  accuracy: null
+} {
+  const id = destinationId || DEFAULT_CITY.destinationId
+  const d = getDestination(id)
+  if (d.lat === 0 && d.lng === 0) {
+    return { lat: DEFAULT_CITY.lat, lng: DEFAULT_CITY.lng, label: DEFAULT_CITY.label, source: 'destination', accuracy: null }
+  }
+  return {
+    lat: d.lat,
+    lng: d.lng,
+    label: d.state ? `${d.name}, ${d.state}` : `${d.name}, ${d.country}`,
+    source: 'destination',
+    accuracy: null,
+  }
+}
 
 export function activeOrigin(
   location: LocationState,
@@ -34,7 +54,7 @@ export function activeOrigin(
       accuracy: location.fix.accuracy,
     }
   }
-  return { ...UNLOCATED, source: 'fallback', accuracy: null }
+  return { ...areaOrigin(destinationId ?? DEFAULT_CITY.destinationId), source: 'fallback', accuracy: null }
 }
 
 /** Origin for itinerary generation: destination city unless GPS is already there. */

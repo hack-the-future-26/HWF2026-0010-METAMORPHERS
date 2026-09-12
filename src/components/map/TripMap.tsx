@@ -4,7 +4,7 @@ import { useEffect } from 'react'
 import { getPlace, PLACES } from '@/data/places'
 import { mapsService } from '@/services/mapsService'
 import { useAppStore } from '@/store/useAppStore'
-import { activeOrigin } from '@/lib/origin'
+import { activeOrigin, areaOrigin } from '@/lib/origin'
 import { Button } from '@/components/ui/Button'
 import { cn, haversineKm } from '@/lib/utils'
 
@@ -23,6 +23,23 @@ function Recenter({ lat, lng, enabled }: { lat: number; lng: number; enabled: bo
     if (!enabled) return
     map.setView([lat, lng], map.getZoom())
   }, [lat, lng, map, enabled])
+  return null
+}
+
+function FitCity({ lat, lng, points }: { lat: number; lng: number; points: [number, number][] }) {
+  const map = useMap()
+  const boundsKey = points.map((p) => p.join(',')).join('|')
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      map.invalidateSize()
+      if (points.length > 1) {
+        map.fitBounds(points, { padding: [36, 36], maxZoom: 14 })
+      } else {
+        map.setView([lat, lng], 13)
+      }
+    }, 80)
+    return () => window.clearTimeout(t)
+  }, [lat, lng, map, boundsKey])
   return null
 }
 
@@ -45,28 +62,28 @@ export function TripMap({ height = 420 }: { height?: number }) {
   const toggle = useAppStore((s) => s.toggleMapFilter)
   const theme = useAppStore((s) => s.theme)
   const select = useAppStore((s) => s.setSelectedPlace)
-  const conditions = useAppStore((s) => s.conditions)
   const location = useAppStore((s) => s.location)
   const nearbyPlaces = useAppStore((s) => s.nearbyPlaces)
   const liveRoute = useAppStore((s) => s.liveRoute)
   const followUser = useAppStore((s) => s.followUser)
   const plannerDest = useAppStore((s) => s.planner.destinationId)
-  const appMode = useAppStore((s) => s.appMode)
   const destId = trip?.destinationId ?? plannerDest
-  const origin = activeOrigin(location, destId)
+  const liveStarted = useAppStore((s) => s.liveStarted)
+  const origin = liveStarted ? activeOrigin(location, destId) : areaOrigin(destId)
 
   const day = trip?.daysPlan[mapDay]
-  const itineraryPts = (day?.activities.map((a) => a.placeId).filter(Boolean) as string[])
-    .map((id) => getPlace(id))
-    .filter(Boolean)
-    .map((p) => [p!.lat, p!.lng] as [number, number])
+  const itineraryPts = (day?.activities ?? [])
+    .map((a) => a.placeId)
+    .filter((id): id is string => Boolean(id))
+    .map((id) => getPlace(id) ?? nearbyPlaces.find((p) => p.id === id))
+    .filter((p): p is NonNullable<typeof p> => Boolean(p))
+    .map((p) => [p.lat, p.lng] as [number, number])
 
-  const catalog =
-    appMode === 'demo'
-      ? PLACES.filter(
-          (p) => destId && p.destinationId === destId && filters.includes(p.category) && haversineKm(origin, p) < 14,
-        )
-      : []
+  const catalog = destId
+    ? PLACES.filter(
+        (p) => p.destinationId === destId && filters.includes(p.category) && haversineKm(origin, p) < 16,
+      )
+    : []
   const live = nearbyPlaces.filter((p) => filters.includes(p.category))
   const seen = new Set<string>()
   const markers = [...live, ...catalog].filter((p) => {
@@ -111,6 +128,7 @@ export function TripMap({ height = 420 }: { height?: number }) {
       </div>
       <div style={{ height }} className="relative">
         <MapContainer
+          key={`${destId ?? 'map'}-${origin.lat.toFixed(3)}-${origin.lng.toFixed(3)}`}
           center={[origin.lat, origin.lng]}
           zoom={13}
           className="map-tiles h-full w-full"
@@ -120,6 +138,7 @@ export function TripMap({ height = 420 }: { height?: number }) {
             attribution={mapsService.attribution}
             url={theme === 'dark' ? mapsService.darkTiles : mapsService.lightTiles}
           />
+          <FitCity lat={origin.lat} lng={origin.lng} points={itineraryPts} />
           <Recenter lat={origin.lat} lng={origin.lng} enabled={followUser} />
           <Marker position={[origin.lat, origin.lng]} icon={pin('#22c55e', true)}>
             <Popup>

@@ -9,11 +9,14 @@ import {
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GripVertical } from 'lucide-react'
+import { toast } from 'sonner'
+import { useNavigate } from 'react-router-dom'
 import type { Activity } from '@/types'
 import { getPlace } from '@/data/places'
-import { crowdOf, useAppStore } from '@/store/useAppStore'
-import { CrowdDot } from '@/components/ui/Feedback'
-import { formatInr } from '@/lib/utils'
+import { useAppStore } from '@/store/useAppStore'
+import { formatDuration, formatKm, formatInr } from '@/lib/utils'
+import { Button } from '@/components/ui/Button'
+import { PlaceImage } from '@/components/ui/PlaceImage'
 
 export function DayTimeline({ dayIndex }: { dayIndex: number }) {
   const trip = useAppStore((s) => s.trip)
@@ -64,10 +67,16 @@ function SortableActivity({ activity }: { activity: Activity }) {
     id: activity.id,
   })
   const select = useAppStore((s) => s.setSelectedPlace)
-  const conditions = useAppStore((s) => s.conditions)
-  const appMode = useAppStore((s) => s.appMode)
-  const place = activity.placeId ? getPlace(activity.placeId) : undefined
+  const remove = useAppStore((s) => s.removeActivity)
+  const replace = useAppStore((s) => s.replaceActivity)
+  const goTo = useAppStore((s) => s.goToPlace)
+  const nearby = useAppStore((s) => s.nearbyPlaces)
+  const navigate = useNavigate()
+  const place = activity.placeId
+    ? (getPlace(activity.placeId) ?? nearby.find((p) => p.id === activity.placeId))
+    : undefined
   const style = { transform: CSS.Transform.toString(transform), transition }
+  const duration = place?.durationMin ?? 60
 
   return (
     <article
@@ -78,29 +87,71 @@ function SortableActivity({ activity }: { activity: Activity }) {
       <button className="text-ink-400" {...attributes} {...listeners} aria-label="Reorder">
         <GripVertical className="size-4" />
       </button>
-      <button
-        className="min-w-0 flex-1 text-left"
-        onClick={() => activity.placeId && select(activity.placeId)}
-      >
-        <p className="text-xs text-teal-800 dark:text-teal-300">{activity.start}</p>
-        <p className="font-medium">{activity.kind === 'meal' ? `${mealEmoji(activity.title)} ${activity.title}` : activity.title}</p>
-        <p className="text-xs text-ink-500">{activity.subtitle}</p>
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-ink-400">
-          {place && appMode === 'demo' && place.crowdKnown !== false ? (
-            <CrowdDot level={crowdOf(place, conditions.crowdOverrides)} />
-          ) : (
+      <div className="min-w-0 flex-1">
+        <button
+          className="w-full text-left"
+          onClick={() => activity.placeId && select(activity.placeId)}
+        >
+          <p className="text-xs text-teal-800 dark:text-teal-300">{activity.start} → {activity.end}</p>
+          <p className="font-medium">{activity.kind === 'meal' ? `${mealEmoji(activity.title)} ${activity.title}` : activity.title}</p>
+          <p className="text-xs text-ink-500">{activity.subtitle}</p>
+          <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-ink-400">
+            <span>📍 {place?.address || place?.name || activity.title}</span>
+            <span>⏱ {formatDuration(duration)}</span>
+            <span>🚗 {activity.travelFromPrevMin ? `${activity.travelFromPrevMin} min` : 'Travel time unavailable'}</span>
+            <span>📏 {activity.travelFromPrevKm ? formatKm(activity.travelFromPrevKm) : 'Distance unavailable'}</span>
             <span>Live crowd data unavailable</span>
-          )}
-          <span>
-            {activity.travelFromPrevMin
-              ? `${activity.travelFromPrevMin} min travel`
-              : 'Route estimate unavailable'}
-          </span>
-          <span>{place?.priceKnown === false || !activity.cost ? 'Price unavailable' : formatInr(activity.cost)}</span>
+            <span>{place?.priceKnown !== true || !activity.cost ? 'Price unavailable' : formatInr(activity.cost)}</span>
+          </div>
+        </button>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              if (place) {
+                goTo(place.id)
+                window.open(`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}`, '_blank')
+              }
+            }}
+          >
+            Navigate
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => remove(activity.id)}>
+            Remove
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              const alt = nearby.find((p) => p.id !== activity.placeId && (p.indoor || p.category === 'attraction'))
+              if (!alt || !activity.placeId) return toast.error('No replacement from current map data.')
+              replace(activity.id, alt.id)
+              toast.success(`Replaced with ${alt.name}`)
+            }}
+          >
+            Replace
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              if (activity.placeId) select(activity.placeId)
+              navigate('/trip')
+            }}
+          >
+            View on Map
+          </Button>
         </div>
-      </button>
+      </div>
       {place && (
-        <img src={place.image} alt="" className="size-16 rounded-2xl object-cover" />
+        <PlaceImage
+          src={place.image}
+          name={place.name}
+          lat={place.lat}
+          lng={place.lng}
+          imgClassName="size-16 rounded-2xl"
+        />
       )}
     </article>
   )

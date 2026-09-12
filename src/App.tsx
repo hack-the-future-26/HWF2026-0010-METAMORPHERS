@@ -8,15 +8,25 @@ import { LiveTripPage } from '@/pages/LiveTripPage'
 import { BudgetPage } from '@/pages/BudgetPage'
 import { SavedPlacesPage } from '@/pages/SavedPlacesPage'
 import { ProfilePage } from '@/pages/ProfilePage'
+import { FoodPage } from '@/pages/FoodPage'
+import { StayPage } from '@/pages/StayPage'
+import { TransportPage } from '@/pages/TransportPage'
+import { TranslatePage } from '@/pages/TranslatePage'
+
+const basename = import.meta.env.BASE_URL === '/' ? undefined : import.meta.env.BASE_URL.replace(/\/$/, '')
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <Routes>
         <Route element={<AppShell />}>
           <Route path="/" element={<HomePage />} />
           <Route path="/plan" element={<PlanTripPage />} />
           <Route path="/explore" element={<ExplorePage />} />
+          <Route path="/food" element={<FoodPage />} />
+          <Route path="/stay" element={<StayPage />} />
+          <Route path="/transport" element={<TransportPage />} />
+          <Route path="/translate" element={<TranslatePage />} />
           <Route path="/trip" element={<MyTripPage />} />
           <Route path="/live" element={<LiveTripPage />} />
           <Route path="/budget" element={<BudgetPage />} />

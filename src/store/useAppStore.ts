@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { DEFAULT_USER } from '@/data/user'
+import { placesForTrip } from '@/data/cityLandmarks'
 import { getPlace, PLACES, registerPlaces } from '@/data/places'
-import { DESTINATIONS, getDestination, registerDestination } from '@/data/destinations'
+import { getDestination, registerDestination, DESTINATIONS } from '@/data/destinations'
 import type {
   AdaptationSuggestion,
   AppDataMode,
@@ -15,20 +16,18 @@ import type {
   LiveConditions,
   LocationState,
   NearbyKind,
-  Pace,
   Place,
   PlannerState,
   RoutePath,
   SavedList,
   SavedPlace,
   ThemeMode,
-  TransportMode,
-  TravelStyle,
   Trip,
   User,
 } from '@/types'
 import { addDays, haversineKm, minutesToTime, todayIso, uid } from '@/lib/utils'
-import { activeOrigin, landmarkLabel, planningOrigin, queryMatchesDestination, tripMatchesPlanner } from '@/lib/origin'
+import { activeOrigin, areaOrigin, planningOrigin, queryMatchesDestination, tripMatchesPlanner } from '@/lib/origin'
+import { DEFAULT_CITY, DEMO_AREA, isVizagDestination } from '@/lib/demoLocation'
 import {
   askAssistant,
   applyOsrmHops,
@@ -124,12 +123,12 @@ export const QUICK_PRESETS: Record<
 
 const defaultPlanner = (): PlannerState => ({
   step: 1,
-  destinationQuery: '',
-  destinationId: null,
+  destinationQuery: DEMO_AREA.city,
+  destinationId: DEMO_AREA.destinationId,
   startDate: todayIso(),
-  endDate: addDays(todayIso(), 2),
+  endDate: todayIso(),
   travelers: { adults: 2, children: 0, seniors: 0 },
-  styles: [],
+  styles: ['beaches', 'food', 'culture', 'nature'],
   budget: 5000,
   pace: 'balanced',
   transport: ['taxi', 'walking'],
@@ -161,16 +160,69 @@ const defaultConditions = (): LiveConditions => ({
 })
 
 const defaultLocation = (): LocationState => ({
-  permission: 'unset',
+  permission: 'fallback',
   loading: false,
   error: null,
   fix: null,
-  label: '',
+  label: DEFAULT_CITY.label,
   watching: false,
   lastNearbyAt: 0,
   lastNearbyLat: null,
   lastNearbyLng: null,
 })
+
+function draftTripFromPlace(place: Place, planner: PlannerState): Trip {
+  const destId = planner.destinationId || place.destinationId || DEMO_AREA.destinationId
+  const dest = getDestination(destId)
+  const start = planner.startDate || todayIso()
+  const activity = {
+    id: uid('act'),
+    dayIndex: 0,
+    start: '09:00',
+    end: '10:30',
+    kind: 'place' as const,
+    title: place.name,
+    subtitle: place.styles[0] ?? place.category,
+    placeId: place.id,
+    cost: place.priceKnown === false ? 0 : place.entryFee,
+    travelFromPrevMin: 0,
+    travelFromPrevKm: 0,
+    transport: planner.transport[0] ?? 'taxi',
+  }
+  return recalcRoute({
+    id: uid('trip'),
+    title: `Your 1-Day ${dest.name} Adventure`,
+    destinationId: dest.id,
+    destinationName: dest.name,
+    destinationLat: dest.lat,
+    destinationLng: dest.lng,
+    generatedAt: new Date().toISOString(),
+    startDate: start,
+    endDate: planner.endDate || start,
+    days: 1,
+    travelers: planner.travelers,
+    styles: planner.styles.length ? planner.styles : ['beaches', 'food', 'culture'],
+    budget: planner.budget,
+    budgetTier: planner.budget <= 8000 ? 'budget' : planner.budget <= 25000 ? 'moderate' : 'premium',
+    pace: planner.pace,
+    transport: planner.transport,
+    daysPlan: [
+      {
+        index: 0,
+        date: start,
+        title: 'Day 1',
+        theme: 'Draft stops',
+        activities: [activity],
+      },
+    ],
+    status: 'planned',
+    matchScore: 80,
+    route: { totalTravelMin: 0, totalDistanceKm: 0, optimized: false },
+    createdAt: new Date().toISOString(),
+    estimatedSpend: activity.cost,
+    placeCount: 1,
+  })
+}
 
 function pushNote(
   list: AppNotification[],
@@ -220,7 +272,11 @@ interface AppStore {
   offRoute: boolean
   rerouting: boolean
   lastRerouteAt: number
+  destinationExplicit: boolean
   hydrateWeather: () => Promise<void>
+  ensureDemoDefaults: () => void
+  resetTrip: () => void
+  simulateGps: () => void
   setAppMode: (m: AppDataMode) => void
   requestLocation: () => Promise<void>
   refreshGpsSilent: () => Promise<void>
@@ -305,7 +361,7 @@ export const useAppStore = create<AppStore>()(
           id: uid('ntf'),
           kind: 'info',
           title: 'Welcome to YatraSense',
-          body: 'LIVE MODE is on. Search any city — itineraries come from OSM, Open-Meteo and OSRM. Open DEMO MODE only for jury simulations.',
+          body: 'Search a famous city or use GPS. Itineraries use OpenStreetMap, Open-Meteo and OSRM.',
           time: new Date().toISOString(),
           read: false,
         },
@@ -323,14 +379,57 @@ export const useAppStore = create<AppStore>()(
       offRoute: false,
       rerouting: false,
       lastRerouteAt: 0,
+      destinationExplicit: false,
+
+      ensureDemoDefaults: () => {
+        set({ appMode: 'real', demoOpen: false })
+      },
+      resetTrip: () => {
+        locationService.stopWatchingLocation()
+        set({
+          trip: null,
+          liveStarted: false,
+          liveRoute: null,
+          adaptation: null,
+          crowdSuggestion: null,
+          offRoute: false,
+          rerouting: false,
+          destinationExplicit: false,
+          planner: defaultPlanner(),
+          followUser: false,
+          location: { ...get().location, watching: false },
+        })
+      },
+      simulateGps: () => {
+        set({
+          location: {
+            ...get().location,
+            permission: 'granted',
+            loading: false,
+            error: null,
+            watching: get().liveStarted,
+            label: DEMO_AREA.label,
+            fix: {
+              lat: DEMO_AREA.lat,
+              lng: DEMO_AREA.lng,
+              accuracy: 14,
+              altitude: null,
+              heading: null,
+              speed: null,
+              timestamp: Date.now(),
+            },
+          },
+        })
+        void get().refreshLiveRoute()
+      },
 
       hydrateWeather: async () => {
         if (!get().online) return
         try {
-          const live = get().liveStarted
-          const origin = live
-            ? activeOrigin(get().location, get().trip?.destinationId ?? get().planner.destinationId)
-            : planningOrigin(get().location, get().trip?.destinationId ?? get().planner.destinationId)
+          const destId = get().trip?.destinationId ?? get().planner.destinationId
+          const origin = get().liveStarted
+            ? activeOrigin(get().location, destId)
+            : areaOrigin(destId)
           if (!origin.lat && !origin.lng && origin.source === 'fallback') return
           const weather = await weatherService.getCurrent(origin)
           set({ conditions: { ...get().conditions, weather } })
@@ -356,7 +455,8 @@ export const useAppStore = create<AppStore>()(
         get().setTheme(theme)
       },
       setAppMode: (appMode) => {
-        set({ appMode, demoOpen: appMode === 'demo' })
+        set({ appMode: 'real', demoOpen: false })
+        void appMode
       },
       requestLocation: async () => {
         if (get().location.permission === 'granted') {
@@ -388,18 +488,7 @@ export const useAppStore = create<AppStore>()(
               fix,
               label,
             },
-            notifications: pushNote(get().notifications, 'info', 'Location enabled', `You're near ${label}.`),
-          })
-          registerDestination({
-            id: `geo_${fix.lat.toFixed(4)}_${fix.lng.toFixed(4)}`,
-            name: label.split(',')[0] || 'Current area',
-            state: label,
-            country: '',
-            tagline: 'Detected from GPS',
-            image: DESTINATIONS[0].image,
-            lat: fix.lat,
-            lng: fix.lng,
-            timezone: 'Asia/Kolkata',
+            notifications: pushNote(get().notifications, 'info', 'Location enabled', `You're near ${label}. Destination stays ${get().planner.destinationQuery || DEMO_AREA.city}.`),
           })
           await get().refreshNearby(true)
           await get().hydrateWeather()
@@ -457,7 +546,8 @@ export const useAppStore = create<AppStore>()(
       },
       goToPlace: (placeId) => {
         const trip = get().trip
-        const place = getPlace(placeId)
+        const place = getPlace(placeId) ?? get().nearbyPlaces.find((p) => p.id === placeId)
+        if (place) registerPlaces([place])
         if (!place) {
           set({ selectedPlaceId: placeId })
           return
@@ -551,7 +641,8 @@ export const useAppStore = create<AppStore>()(
       },
       refreshNearby: async (force = false) => {
         if (!get().online) return
-        const origin = activeOrigin(get().location, get().trip?.destinationId ?? get().planner.destinationId)
+        const destId = get().trip?.destinationId ?? get().planner.destinationId ?? DEMO_AREA.destinationId
+        const origin = get().liveStarted ? activeOrigin(get().location, destId) : areaOrigin(destId)
         const loc = get().location
         if (
           !force &&
@@ -563,33 +654,46 @@ export const useAppStore = create<AppStore>()(
         }
         set({ nearbyLoading: true, nearbyError: null })
         try {
-          const destId = get().trip?.destinationId ?? get().planner.destinationId ?? 'live'
-          const list = await placesService.nearby(origin, 5000, destId, { allowCatalog: get().appMode === 'demo' })
-          registerPlaces(list)
-          const label = landmarkLabel(origin, list, get().location.label || origin.label)
+          const allowCatalog = destId === 'vizag'
+          const radiusM = destId === 'vizag' ? 14000 : 16000
+          const list = await placesService.nearby(origin, radiusM, destId, { allowCatalog })
+          const merged = placesForTrip(destId, origin, list, radiusM / 1000 + 2)
           set({
-            nearbyPlaces: list,
+            nearbyPlaces: merged,
             nearbyLoading: false,
+            nearbyError: null,
             location: {
               ...get().location,
-              label,
               lastNearbyAt: Date.now(),
               lastNearbyLat: origin.lat,
               lastNearbyLng: origin.lng,
             },
           })
         } catch {
+          const destIdNow = get().trip?.destinationId ?? get().planner.destinationId ?? DEMO_AREA.destinationId
+          const originNow = get().liveStarted ? activeOrigin(get().location, destIdNow) : areaOrigin(destIdNow)
+          const catalog =
+            destIdNow === 'vizag'
+              ? placesForTrip(
+                  destIdNow,
+                  originNow,
+                  PLACES.filter((p) => p.destinationId === destIdNow || haversineKm(DEMO_AREA, p) < 20),
+                  20,
+                )
+              : placesForTrip(destIdNow, originNow, [], 20)
           set({
             nearbyLoading: false,
-            nearbyError: 'Nearby places unavailable.',
-            nearbyPlaces: get().nearbyPlaces,
+            nearbyError: catalog.length ? null : 'Unable to load places right now.',
+            nearbyPlaces: catalog,
           })
         }
       },
       refreshLiveRoute: async () => {
         const trip = get().trip
         const nextAct = trip?.daysPlan[get().mapDay ?? 0]?.activities.find((a) => a.kind === 'place')
-        const place = nextAct?.placeId ? getPlace(nextAct.placeId) : undefined
+        const place = nextAct?.placeId
+          ? (getPlace(nextAct.placeId) ?? get().nearbyPlaces.find((p) => p.id === nextAct.placeId))
+          : undefined
         if (!place) return
         const origin = activeOrigin(get().location, trip?.destinationId)
         const mode = trip?.transport[0] ?? 'taxi'
@@ -622,7 +726,7 @@ export const useAppStore = create<AppStore>()(
           itinerary: trip,
           weather: w,
           availablePlaces: get().nearbyPlaces,
-          demoMode: get().appMode === 'demo',
+          demoMode: false,
         })
         if (!sug) return
         if (get().adaptation?.affectedActivityId === sug.affectedActivityId) return
@@ -678,14 +782,20 @@ export const useAppStore = create<AppStore>()(
 
       setPlanner: (patch) => {
         const prev = get().planner
-        const destChanged =
-          (patch.destinationId !== undefined && patch.destinationId !== prev.destinationId) ||
-          (patch.destinationQuery !== undefined &&
-            patch.destinationQuery.trim() !== prev.destinationQuery.trim() &&
-            (patch.destinationId === null || patch.destinationId === undefined))
+        const nextDest = patch.destinationId !== undefined ? patch.destinationId : prev.destinationId
+        const destChanged = patch.destinationId !== undefined && patch.destinationId !== prev.destinationId
+        const destinationExplicit =
+          nextDest && !isVizagDestination(nextDest, patch.destinationQuery ?? prev.destinationQuery)
+            ? true
+            : destChanged && isVizagDestination(nextDest, patch.destinationQuery)
+              ? false
+              : get().destinationExplicit
         set({
           planner: { ...prev, ...patch },
-          ...(destChanged ? { trip: null, liveRoute: null, liveStarted: false, offRoute: false, nearbyPlaces: [] } : {}),
+          destinationExplicit,
+          ...(destChanged && nextDest
+            ? { trip: null, liveRoute: null, liveStarted: false, offRoute: false, nearbyPlaces: [] }
+            : {}),
         })
       },
 
@@ -709,7 +819,7 @@ export const useAppStore = create<AppStore>()(
       },
 
       generateTrip: async () => {
-        const demoMode = get().appMode === 'demo'
+        const demoMode = false
         const stage = (progress: number, message: string, extra?: Partial<PlannerState>) => {
           set({
             planner: {
@@ -724,8 +834,8 @@ export const useAppStore = create<AppStore>()(
         }
 
         stage(8, generateMessages[0])
-        if (get().location.permission === 'granted') {
-          await get().refreshGpsSilent()
+        if (get().location.permission === 'granted' && get().destinationExplicit) {
+          void get().refreshGpsSilent()
         }
 
         stage(18, generateMessages[1])
@@ -746,21 +856,7 @@ export const useAppStore = create<AppStore>()(
           }
         }
         if (!destId && !query) {
-          const loc = get().location
-          if (loc.fix && loc.permission === 'granted') {
-            destId = `geo_${loc.fix.lat.toFixed(4)}_${loc.fix.lng.toFixed(4)}`
-            registerDestination({
-              id: destId,
-              name: (loc.label || 'Current area').split(',')[0],
-              state: loc.label || '',
-              country: '',
-              tagline: loc.label || 'Detected from GPS',
-              image: DESTINATIONS[0].image,
-              lat: loc.fix.lat,
-              lng: loc.fix.lng,
-              timezone: 'Asia/Kolkata',
-            })
-          }
+          destId = DEMO_AREA.destinationId
         }
         if (!destId) {
           set({
@@ -781,20 +877,31 @@ export const useAppStore = create<AppStore>()(
           destinationQuery: query || dest.name,
           styles: get().planner.styles.length ? get().planner.styles : get().user.preferences.styles,
         }
-        set({ planner: { ...planner, generating: true, generateProgress: 28, generateMessage: generateMessages[2] } })
+        set({
+          planner: { ...planner, generating: true, generateProgress: 28, generateMessage: generateMessages[2] },
+          destinationExplicit: !isVizagDestination(destId, planner.destinationQuery),
+        })
 
         const origin = planningOrigin(get().location, destId)
-        let extra: Place[] = []
+        const radiusM = destId === 'vizag' ? 14000 : 18000
+        let osm: Place[] = []
         if (get().online) {
           try {
-            extra = await placesService.nearby(origin, 8000, destId, { allowCatalog: demoMode })
-            registerPlaces(extra)
+            osm = await Promise.race([
+              placesService.nearby(origin, radiusM, destId, {
+                allowCatalog: demoMode || destId === 'vizag',
+              }),
+              new Promise<Place[]>((_, reject) =>
+                globalThis.setTimeout(() => reject(new Error('places-timeout')), 12000),
+              ),
+            ])
           } catch {
-            extra = get().nearbyPlaces.filter((p) => p.source === 'osm' || demoMode)
+            osm = destId === 'vizag' ? PLACES.filter((p) => p.destinationId === 'vizag') : []
           }
-        } else {
-          extra = get().nearbyPlaces
+        } else if (destId === 'vizag') {
+          osm = PLACES.filter((p) => p.destinationId === 'vizag')
         }
+        const extra = placesForTrip(destId, origin, osm, radiusM / 1000 + 4)
 
         stage(48, generateMessages[3])
         let weather = get().conditions.weather
@@ -890,8 +997,14 @@ export const useAppStore = create<AppStore>()(
 
       addPlaceToTrip: (placeId, dayIndex = 0) => {
         const trip = get().trip
-        const place = getPlace(placeId)
-        if (!trip || !place) return
+        const place = getPlace(placeId) ?? get().nearbyPlaces.find((p) => p.id === placeId)
+        if (!place) return
+        if (place) registerPlaces([place])
+        if (!trip) {
+          set({ trip: draftTripFromPlace(place, get().planner) })
+          void get().refreshLiveRoute()
+          return
+        }
         const day = trip.daysPlan[dayIndex] ?? trip.daysPlan[0]
         const activity = {
           id: uid('act'),
@@ -931,7 +1044,8 @@ export const useAppStore = create<AppStore>()(
 
       replaceActivity: (activityId, placeId) => {
         const trip = get().trip
-        const place = getPlace(placeId)
+        const place = getPlace(placeId) ?? get().nearbyPlaces.find((p) => p.id === placeId)
+        if (place) registerPlaces([place])
         if (!trip || !place) return
         const daysPlan = trip.daysPlan.map((d) => ({
           ...d,
@@ -1044,8 +1158,8 @@ export const useAppStore = create<AppStore>()(
           itinerary: trip,
           weather,
           availablePlaces: get().nearbyPlaces,
-          demoMode: get().appMode === 'demo',
-        }) ?? rainAdaptation(trip, get().nearbyPlaces, get().appMode === 'demo')
+          demoMode: false,
+        }) ?? rainAdaptation(trip, get().nearbyPlaces, false)
         if (!sug) {
           set({
             notifications: pushNote(
@@ -1061,7 +1175,12 @@ export const useAppStore = create<AppStore>()(
         set({
           trip: next,
           adaptation: sug,
-          notifications: pushNote(get().notifications, 'weather', 'Itinerary updated', sug.reason),
+          notifications: pushNote(
+            get().notifications,
+            'weather',
+            '🌧️ Rain detected — itinerary adapted.',
+            'YatraSense adapted your journey to changing conditions.',
+          ),
         })
         void get().refreshLiveRoute()
       },
@@ -1152,28 +1271,35 @@ export const useAppStore = create<AppStore>()(
         set({ chat: [...get().chat, userMsg] })
         const spent = get().expenses.reduce((s, e) => s + e.amount, 0)
         const budget = get().trip?.budget ?? get().user.preferences.defaultBudget
-        const origin = activeOrigin(get().location, get().trip?.destinationId)
+        const origin = activeOrigin(get().location, get().trip?.destinationId ?? get().planner.destinationId)
+        const dest = get().trip?.destinationName ?? get().planner.destinationQuery ?? DEFAULT_CITY.city
+        const destId = get().trip?.destinationId ?? get().planner.destinationId
         const nextAct = get().trip?.daysPlan[0]?.activities.find((a) => a.kind === 'place')
         const result = await askAssistant(text, {
           trip: get().trip,
           conditions: get().conditions,
           remainingBudget: budget - spent,
           spent,
-          label: origin.label,
+          label: origin.label || DEFAULT_CITY.label,
+          destination: dest,
+          destinationId: destId,
           nextName: nextAct?.title,
           routeKm: get().liveRoute?.km,
           routeMin: get().liveRoute?.minutes,
-          mode: get().appMode,
+          mode: 'real',
+          live: get().liveStarted,
+          adapted: Boolean(get().adaptation),
+          adaptationReason: get().adaptation?.reason,
+          nearbyNames: get().nearbyPlaces.slice(0, 6).map((p) => p.name),
         })
         if (result.action === 'cheap' && get().trip) {
-          const cheap =
-            get().nearbyPlaces.find((p) => p.nearbyKind === 'cafe' || p.category === 'cafe' || p.category === 'restaurant') ??
-            (get().appMode === 'demo' ? PLACES.find((p) => p.id === 'chapathi-point') : undefined)
+          const cheap = get().nearbyPlaces.find(
+            (p) => p.nearbyKind === 'cafe' || p.category === 'cafe' || p.category === 'restaurant',
+          )
           if (cheap) get().addPlaceToTrip(cheap.id)
         }
         if (result.action === 'adapt') {
-          if (get().appMode === 'demo') get().simulateRain()
-          else get().evaluateRealWeather()
+          get().evaluateRealWeather()
         }
         if (result.action === 'go') {
           const target = nextAct?.placeId ?? get().nearbyPlaces[0]?.id
@@ -1206,6 +1332,7 @@ export const useAppStore = create<AppStore>()(
         trip: s.trip,
         planner: { ...s.planner, generating: false },
         appMode: s.appMode,
+        destinationExplicit: s.destinationExplicit,
         nearbyPlaces: s.nearbyPlaces,
         location: {
           ...s.location,
@@ -1216,36 +1343,77 @@ export const useAppStore = create<AppStore>()(
       }),
       merge: (persisted, current) => {
         const p = persisted as Partial<AppStore> | undefined
-        const planner = p?.planner
+        const explicit = Boolean(p?.destinationExplicit) || Boolean(p?.planner?.destinationId)
+        const rawPlanner = p?.planner
           ? { ...current.planner, ...p.planner, generating: false, generateError: p.planner.generateError ?? null }
           : current.planner
-        const trip = tripMatchesPlanner(p?.trip, planner) ? p!.trip! : null
+        const destKnown =
+          !rawPlanner.destinationId ||
+          DESTINATIONS.some((d) => d.id === rawPlanner.destinationId) ||
+          rawPlanner.destinationId.startsWith('geo_')
+        const planner = destKnown && rawPlanner.destinationId
+          ? rawPlanner
+          : { ...rawPlanner, destinationId: DEFAULT_CITY.destinationId, destinationQuery: DEFAULT_CITY.city }
+        const rawTrip = tripMatchesPlanner(p?.trip, planner) ? p!.trip! : null
+        const trip = rawTrip
+        const destCenter = getDestination(planner.destinationId || DEFAULT_CITY.destinationId)
+        const nearby = (p?.nearbyPlaces ?? current.nearbyPlaces).filter(
+          (place) =>
+            (place.destinationId === planner.destinationId ||
+              (planner.destinationId === 'vizag' && haversineKm(DEFAULT_CITY, place) < 35)) &&
+            haversineKm(destCenter, place) < 45,
+        )
         return {
           ...current,
           ...p,
           trip,
           planner,
+          nearbyPlaces: nearby,
+          destinationExplicit: explicit,
+          appMode: 'real',
           liveStarted: false,
           offRoute: false,
           rerouting: false,
-          demoOpen: (p?.appMode ?? 'real') === 'demo' ? Boolean(p?.demoOpen) : false,
-          conditions: {
-            ...current.conditions,
-            ...p?.conditions,
-            trafficFeed: p?.conditions?.trafficFeed ?? current.conditions.trafficFeed,
-            crowdFeed: p?.conditions?.crowdFeed ?? current.conditions.crowdFeed,
-          },
+          demoOpen: false,
+          conditions: current.conditions,
           location: {
             ...defaultLocation(),
             ...p?.location,
+            permission: p?.location?.permission === 'granted' ? 'granted' : 'fallback',
             loading: false,
             watching: false,
             lastNearbyAt: 0,
+            label:
+              p?.location?.permission === 'granted' && p.location.label
+                ? p.location.label
+                : getDestination(planner.destinationId || DEFAULT_CITY.destinationId).name,
           },
         }
       },
-      version: 2,
-      migrate: (persisted) => persisted as AppStore,
+      version: 5,
+      migrate: (persisted, version) => {
+        const p = persisted as Partial<AppStore>
+        if (version < 5) {
+          return {
+            ...p,
+            nearbyPlaces: [],
+            trip: null,
+            appMode: 'real',
+            demoOpen: false,
+          } as AppStore
+        }
+        if (version >= 4) return { ...p, appMode: 'real', demoOpen: false } as AppStore
+        return {
+          ...p,
+          appMode: 'real',
+          demoOpen: false,
+          destinationExplicit: Boolean(p.planner?.destinationId),
+          planner: {
+            ...(p.planner ?? defaultPlanner()),
+            generating: false,
+          },
+        } as AppStore
+      },
       onRehydrateStorage: () => (state) => {
         if (state?.nearbyPlaces?.length) registerPlaces(state.nearbyPlaces)
         const snaps = state?.saved?.map((s) => s.snapshot).filter(Boolean) as Place[] | undefined
@@ -1257,7 +1425,7 @@ export const useAppStore = create<AppStore>()(
             state: '',
             country: '',
             tagline: state.trip.destinationName || '',
-            image: DESTINATIONS[0].image,
+            image: getDestination(state.trip.destinationId).image,
             lat: state.trip.destinationLat ?? getDestination(state.trip.destinationId).lat,
             lng: state.trip.destinationLng ?? getDestination(state.trip.destinationId).lng,
             timezone: 'UTC',

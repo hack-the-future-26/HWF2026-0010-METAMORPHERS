@@ -1,15 +1,22 @@
-import { DESTINATIONS, registerDestination } from '@/data/destinations'
+import { DESTINATIONS, getDestination, registerDestination } from '@/data/destinations'
 import { PLACES, registerPlaces } from '@/data/places'
 import type { Destination, LatLng, Place, PlaceCategory, NearbyKind, TravelStyle, RoutePath, WeatherSnapshot } from '@/types'
 import { haversineKm, travelMinutes } from '@/lib/utils'
+import { satellitePhoto } from '@/lib/media'
 import { cacheGet, cacheSet } from '@/lib/cache'
 import { OSM_UNAVAILABLE, WEATHER_UNAVAILABLE } from '@/lib/osmCopy'
 import { API } from './config'
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
-  if (!res.ok) throw new Error(`Request failed ${res.status}`)
-  return (await res.json()) as T
+  const ctrl = new AbortController()
+  const timer = globalThis.setTimeout(() => ctrl.abort(), 8000)
+  try {
+    const res = await fetch(url, { ...init, signal: init?.signal ?? ctrl.signal })
+    if (!res.ok) throw new Error(`Request failed ${res.status}`)
+    return (await res.json()) as T
+  } finally {
+    globalThis.clearTimeout(timer)
+  }
 }
 
 const NOMINATIM = API.nominatimUrl || API.geocodingUrl || 'https://nominatim.openstreetmap.org'
@@ -30,7 +37,7 @@ async function overpassElements(query: string): Promise<{ elements: OsmEl[]; ok:
   for (const url of OVERPASS_MIRRORS) {
     try {
       const ctrl = new AbortController()
-      const timer = globalThis.setTimeout(() => ctrl.abort(), 22000)
+      const timer = globalThis.setTimeout(() => ctrl.abort(), 8000)
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
@@ -85,6 +92,10 @@ function toDestination(input: {
   }
 }
 
+function inIndia(lat: number, lng: number) {
+  return lat >= 6.4 && lat <= 37.2 && lng >= 68 && lng <= 97.5
+}
+
 async function photonGeocode(q: string): Promise<Destination[]> {
   try {
     const data = await getJson<{
@@ -98,15 +109,17 @@ async function photonGeocode(q: string): Promise<Destination[]> {
           osm_value?: string
         }
       }[]
-    }>(`${PHOTON}?q=${encodeURIComponent(q)}&limit=6`)
+    }>(`${PHOTON}?q=${encodeURIComponent(q)}&limit=8&bbox=68.1,6.5,97.4,37.1`)
     const out: Destination[] = []
     for (const [i, f] of (data.features ?? []).entries()) {
       const [lng, lat] = f.geometry?.coordinates ?? []
       const name = f.properties?.name?.trim()
       if (lat == null || lng == null || !name) continue
+      if (!inIndia(lat, lng)) continue
       const city = f.properties?.city || name
       const state = f.properties?.state || ''
-      const country = f.properties?.country || ''
+      const country = f.properties?.country || 'India'
+      if (country && !/india/i.test(country)) continue
       const display = [name, city, state, country].filter(Boolean).join(', ')
       out.push(toDestination({ lat, lng, name, city, state, country, displayName: display, index: i }))
     }
@@ -214,9 +227,9 @@ export const weatherService = {
 }
 
 export const mapsService = {
-  lightTiles: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  lightTiles: API.mapsTileUrl || 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
   darkTiles: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  attribution: '&copy; OpenStreetMap contributors',
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
   tileUrl() {
     return API.mapsTileUrl || this.lightTiles
   },
@@ -289,9 +302,11 @@ export const geocodingService = {
             country?: string
           }
         }[]
-      >(`/search?q=${encodeURIComponent(q)}&format=json&limit=6&addressdetails=1`)
+      >(`/search?q=${encodeURIComponent(q)}&format=json&limit=6&addressdetails=1&countrycodes=in`)
       if (data?.length) {
-        const results = data.map((r, i) =>
+        const results = data
+          .filter((r) => inIndia(Number(r.lat), Number(r.lon)))
+          .map((r, i) =>
           toDestination({
             lat: Number(r.lat),
             lng: Number(r.lon),
@@ -340,6 +355,9 @@ function classify(tags: Record<string, string>): { category: PlaceCategory; near
   if (amenity === 'atm' || amenity === 'bank') return { category: 'emergency', nearbyKind: 'atm', styles: [], indoor: true, weatherSensitive: false }
   if (amenity === 'toilets') return { category: 'emergency', nearbyKind: 'restroom', styles: [], indoor: true, weatherSensitive: false }
   if (amenity === 'fuel') return { category: 'transport', nearbyKind: 'fuel', styles: [], indoor: false, weatherSensitive: false }
+  if (amenity === 'bus_station' || tags.aeroway === 'aerodrome' || tags.railway === 'station' || tags.public_transport === 'station') {
+    return { category: 'transport', styles: [], indoor: true, weatherSensitive: false }
+  }
   if (amenity === 'cafe') return { category: 'cafe', nearbyKind: 'cafe', styles: ['food', 'relaxation'], indoor: true, weatherSensitive: false }
   if (amenity === 'restaurant' || amenity === 'fast_food' || amenity === 'food_court') {
     return { category: 'restaurant', nearbyKind: 'restaurant', styles: ['food'], indoor: true, weatherSensitive: false }
@@ -398,6 +416,10 @@ function toPlace(el: OsmEl, origin: LatLng, destId: string): Place | null {
   const hours = parseHours(tags.opening_hours)
   const id = `osm_${el.type}_${el.id}`
   const addr = [tags['addr:housename'], tags['addr:street'], tags['addr:city']].filter(Boolean).join(', ')
+  const commons = tags.wikimedia_commons?.replace(/^File:/i, '')
+  const image = commons
+    ? `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(commons)}?width=800`
+    : satellitePhoto(coords.lat, coords.lng)
   return {
     id,
     destinationId: destId,
@@ -408,8 +430,8 @@ function toPlace(el: OsmEl, origin: LatLng, destId: string): Place | null {
     description: tags.description || tags.wikipedia || `${name} (OpenStreetMap)`,
     rating: 0,
     reviewCount: 0,
-    image: '',
-    images: [],
+    image,
+    images: image ? [image] : [],
     lat: coords.lat,
     lng: coords.lng,
     address: addr || OSM_UNAVAILABLE,
@@ -424,7 +446,9 @@ function toPlace(el: OsmEl, origin: LatLng, destId: string): Place | null {
     estimatedCost: 0,
     indoor: meta.indoor,
     weatherSensitive: meta.weatherSensitive,
-    tags: Object.keys(tags).slice(0, 8),
+    tags: [tags.amenity, tags.tourism, tags.leisure, tags.shop, tags.public_transport, tags.aeroway]
+      .filter(Boolean)
+      .slice(0, 8),
     source: 'osm',
     website: tags.website || tags['contact:website'],
     phone: tags.phone || tags['contact:phone'],
@@ -432,7 +456,7 @@ function toPlace(el: OsmEl, origin: LatLng, destId: string): Place | null {
     hoursKnown: hours.hoursKnown,
     priceKnown: false,
     crowdKnown: false,
-    imageKnown: false,
+    imageKnown: Boolean(image),
   }
 }
 
@@ -470,11 +494,17 @@ const PHOTON_QUERIES = [
 ] as const
 
 async function photonNearby(coords: LatLng, radiusM: number, destId: string): Promise<Place[]> {
+  const dest = getDestination(destId)
+  const city = dest.name && dest.name !== destId ? dest.name : ''
+  const degLat = Math.max(0.08, radiusM / 111_000)
+  const degLng = Math.max(0.08, radiusM / (111_000 * Math.max(0.2, Math.cos((coords.lat * Math.PI) / 180))))
+  const bbox = `${coords.lng - degLng},${coords.lat - degLat},${coords.lng + degLng},${coords.lat + degLat}`
   const batches = await Promise.all(
     PHOTON_QUERIES.map(async (q) => {
       try {
+        const query = city ? `${q} ${city}` : q
         const data = await getJson<{ features?: PhotonFeature[] }>(
-          `${PHOTON}?q=${encodeURIComponent(q)}&lat=${coords.lat}&lon=${coords.lng}&limit=12`,
+          `${PHOTON}?q=${encodeURIComponent(query)}&lat=${coords.lat}&lon=${coords.lng}&bbox=${encodeURIComponent(bbox)}&limit=10`,
         )
         return data.features ?? []
       } catch {
@@ -548,7 +578,7 @@ export const placesService = {
       }
       return list
     }
-    const key = `near:v5:${coords.lat.toFixed(3)},${coords.lng.toFixed(3)}:${radiusM}`
+    const key = `near:v6:${destId}:${coords.lat.toFixed(3)},${coords.lng.toFixed(3)}:${radiusM}`
     const cached = cacheGet<Place[]>(key, 4 * 60 * 1000)
     if (cached?.some((p) => p.source === 'osm')) {
       const list = mergeCatalog([...cached])
@@ -568,6 +598,10 @@ export const placesService = {
   nwr["amenity"="place_of_worship"]${around};
   nwr["natural"]${around};
   nwr["amenity"~"restaurant|cafe|fast_food|food_court"]${around};
+  nwr["tourism"~"hotel|guest_house|hostel"]${around};
+  nwr["amenity"="bus_station"]${around};
+  nwr["aeroway"="aerodrome"]${around};
+  nwr["railway"="station"]${around};
 );
 out center 80;
 `

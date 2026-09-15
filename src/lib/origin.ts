@@ -1,26 +1,31 @@
 import { PLACES } from '@/data/places'
-import { getDestination } from '@/data/destinations'
+import { findDestination } from '@/data/destinations'
 import type { LocationState, Place } from '@/types'
 import { haversineKm } from '@/lib/utils'
-import { DEFAULT_CITY } from '@/lib/demoLocation'
 
-/** Discovery origin for the selected destination — city-center coordinates. */
 export function areaOrigin(destinationId?: string | null): {
   lat: number
   lng: number
   label: string
   source: 'destination'
   accuracy: null
+  unresolved?: boolean
 } {
-  const id = destinationId || DEFAULT_CITY.destinationId
-  const d = getDestination(id)
-  if (d.lat === 0 && d.lng === 0) {
-    return { lat: DEFAULT_CITY.lat, lng: DEFAULT_CITY.lng, label: DEFAULT_CITY.label, source: 'destination', accuracy: null }
+  const d = findDestination(destinationId)
+  if (!d || (d.lat === 0 && d.lng === 0)) {
+    return {
+      lat: 0,
+      lng: 0,
+      label: destinationId ? 'Unresolved destination' : 'No destination selected',
+      source: 'destination',
+      accuracy: null,
+      unresolved: true,
+    }
   }
   return {
     lat: d.lat,
     lng: d.lng,
-    label: d.state ? `${d.name}, ${d.state}` : `${d.name}, ${d.country}`,
+    label: d.displayName || (d.state ? `${d.name}, ${d.state}` : `${d.name}${d.country ? `, ${d.country}` : ''}`),
     source: 'destination',
     accuracy: null,
   }
@@ -29,7 +34,7 @@ export function areaOrigin(destinationId?: string | null): {
 export function activeOrigin(
   location: LocationState,
   destinationId?: string | null,
-): { lat: number; lng: number; label: string; source: 'gps' | 'destination' | 'fallback'; accuracy: number | null } {
+): { lat: number; lng: number; label: string; source: 'gps' | 'destination' | 'fallback'; accuracy: number | null; unresolved?: boolean } {
   if (location.fix && location.permission === 'granted') {
     return {
       lat: location.fix.lat,
@@ -40,10 +45,8 @@ export function activeOrigin(
     }
   }
   if (destinationId) {
-    const d = getDestination(destinationId)
-    if (d.lat !== 0 || d.lng !== 0) {
-      return { lat: d.lat, lng: d.lng, label: d.name, source: 'destination', accuracy: null }
-    }
+    const origin = areaOrigin(destinationId)
+    if (!origin.unresolved) return { ...origin, source: 'destination' }
   }
   if (location.fix) {
     return {
@@ -54,27 +57,27 @@ export function activeOrigin(
       accuracy: location.fix.accuracy,
     }
   }
-  return { ...areaOrigin(destinationId ?? DEFAULT_CITY.destinationId), source: 'fallback', accuracy: null }
+  return { ...areaOrigin(destinationId), source: 'fallback' }
 }
 
 /** Origin for itinerary generation: destination city unless GPS is already there. */
 export function planningOrigin(
   location: LocationState,
   destinationId?: string | null,
-): { lat: number; lng: number; label: string; source: 'gps' | 'destination' | 'fallback'; accuracy: number | null } {
+): { lat: number; lng: number; label: string; source: 'gps' | 'destination' | 'fallback'; accuracy: number | null; unresolved?: boolean } {
   if (destinationId) {
-    const d = getDestination(destinationId)
-    if (d.lat === 0 && d.lng === 0) return activeOrigin(location, destinationId)
-    if (location.fix && location.permission === 'granted' && haversineKm(location.fix, d) < 50) {
+    const dest = areaOrigin(destinationId)
+    if (dest.unresolved) return activeOrigin(location, destinationId)
+    if (location.fix && location.permission === 'granted' && haversineKm(location.fix, dest) < 50) {
       return {
         lat: location.fix.lat,
         lng: location.fix.lng,
-        label: location.label || d.name,
+        label: location.label || dest.label,
         source: 'gps',
         accuracy: location.fix.accuracy,
       }
     }
-    return { lat: d.lat, lng: d.lng, label: d.name, source: 'destination', accuracy: null }
+    return { ...dest, source: 'destination' }
   }
   return activeOrigin(location, destinationId)
 }
@@ -83,8 +86,9 @@ export function queryMatchesDestination(query: string, destinationId?: string | 
   if (!destinationId) return false
   const q = query.trim().toLowerCase()
   if (!q) return true
-  const d = getDestination(destinationId)
-  const blob = `${d.name} ${d.state} ${d.country} ${d.tagline} ${d.id}`.toLowerCase()
+  const d = findDestination(destinationId)
+  if (!d) return false
+  const blob = `${d.name} ${d.displayName ?? ''} ${d.state} ${d.country} ${d.tagline} ${d.id}`.toLowerCase()
   return blob.includes(q) || q.includes(d.name.toLowerCase())
 }
 

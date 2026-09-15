@@ -4,26 +4,14 @@ import { spentTotal, useAppStore } from '@/store/useAppStore'
 import { getPlace } from '@/data/places'
 import { rankPlaces } from '@/lib/recommend'
 import { activeOrigin } from '@/lib/origin'
-import { formatKm, formatInr, haversineKm } from '@/lib/utils'
-import type { NearbyKind } from '@/types'
+import { formatKm, haversineKm } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/Feedback'
 import { AdaptationCard } from '@/components/trip/ShareTripModal'
 import { SafetyPanel } from '@/components/safety/SOSModal'
 import { TripMap } from '@/components/map/TripMap'
-import { PlaceImage } from '@/components/ui/PlaceImage'
+import { DataSources } from '@/components/status/DataSources'
 import { toast } from 'sonner'
-
-const NEAR: { id: NearbyKind; label: string; icon: string }[] = [
-  { id: 'restaurant', label: 'Restaurants', icon: '🍛' },
-  { id: 'cafe', label: 'Cafes', icon: '☕' },
-  { id: 'hospital', label: 'Hospitals', icon: '🏥' },
-  { id: 'pharmacy', label: 'Pharmacies', icon: '💊' },
-  { id: 'restroom', label: 'Restrooms', icon: '🚻' },
-  { id: 'fuel', label: 'Fuel', icon: '⛽' },
-  { id: 'atm', label: 'ATMs', icon: '🏧' },
-  { id: 'shopping', label: 'Shopping', icon: '🛍️' },
-]
 
 export function LiveTripPage() {
   const trip = useAppStore((s) => s.trip)
@@ -31,16 +19,10 @@ export function LiveTripPage() {
   const start = useAppStore((s) => s.startTrip)
   const conditions = useAppStore((s) => s.conditions)
   const expenses = useAppStore((s) => s.expenses)
-  const select = useAppStore((s) => s.setSelectedPlace)
-  const nearbyFilter = useAppStore((s) => s.nearbyFilter)
-  const setNearby = useAppStore((s) => s.setNearby)
-  const nearbySort = useAppStore((s) => s.nearbySort)
-  const setSort = useAppStore((s) => s.setNearbySort)
   const online = useAppStore((s) => s.online)
   const hydrate = useAppStore((s) => s.hydrateWeather)
   const location = useAppStore((s) => s.location)
   const nearbyPlaces = useAppStore((s) => s.nearbyPlaces)
-  const nearbyLoading = useAppStore((s) => s.nearbyLoading)
   const liveRoute = useAppStore((s) => s.liveRoute)
   const requestLocation = useAppStore((s) => s.requestLocation)
   const offRoute = useAppStore((s) => s.offRoute)
@@ -66,21 +48,11 @@ export function LiveTripPage() {
     ? (getPlace(top.score.placeId) ?? nearbyPlaces.find((p) => p.id === top.score.placeId) ?? next)
     : next
 
-  const nearby = useMemo(() => {
-    let list = nearbyPlaces
-    if (nearbyFilter !== 'all') list = list.filter((p) => p.nearbyKind === nearbyFilter)
-    return [...list].sort((a, b) => {
-      if (nearbySort === 'rating') return (b.ratingKnown === false ? -1 : b.rating) - (a.ratingKnown === false ? -1 : a.rating)
-      if (nearbySort === 'price') return a.estimatedCost - b.estimatedCost
-      return haversineKm(origin, a) - haversineKm(origin, b)
-    })
-  }, [nearbyFilter, nearbySort, nearbyPlaces, origin.lat, origin.lng])
-
   if (!trip) {
     return (
       <EmptyState
         title="Start a trip first"
-        body="Generate an itinerary, then enter live mode."
+        body="Generate an itinerary, then enter live mode so weather can rewrite the day."
         action={{ label: 'Plan My Trip ✨', onClick: () => navigate('/plan') }}
       />
     )
@@ -89,9 +61,9 @@ export function LiveTripPage() {
   if (!live) {
     return (
       <div className="mx-auto max-w-lg py-16 text-center">
-        <h1 className="font-display text-4xl">Ready when you are</h1>
+        <h1 className="font-display text-4xl">This is the gap maps leave open</h1>
         <p className="mt-3 text-sm text-ink-500">
-          Live mode starts GPS tracking, watches weather, and keeps your next stop in sync.
+          Live mode watches GPS and Open-Meteo. If rain or heat crosses the line, the itinerary changes — and you can ask why.
         </p>
         <Button className="mt-6" size="lg" onClick={start}>
           Start Trip
@@ -102,12 +74,19 @@ export function LiveTripPage() {
 
   const etaMin = liveRoute?.minutes ?? (next ? Math.round((haversineKm(origin, next) / 28) * 60) : 0)
   const dist = liveRoute ? formatKm(liveRoute.km) : next ? formatKm(haversineKm(origin, next)) : '—'
+  const rain = conditions.weather.rainProbability
+  const health =
+    conditions.weather.unavailable || location.permission === 'denied'
+      ? 'Attention'
+      : rain >= 70
+        ? 'Action required'
+        : 'Good'
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-teal-700">🟢 Trip Active</p>
+          <p className="text-xs uppercase tracking-[0.18em] text-teal-700">LIVE TRIP STATUS</p>
           <h1 className="font-display text-4xl">
             {location.loading ? 'Getting your location...' : 'You’re here 📍'}
           </h1>
@@ -123,10 +102,16 @@ export function LiveTripPage() {
           )}
           {origin.source !== 'gps' && (
             <p className="text-xs text-ink-400">
-              GPS unavailable. Continuing with planned route.{' '}
-              <button className="underline" onClick={() => void requestLocation()}>
-                Allow location
-              </button>
+              {location.permission === 'denied'
+                ? 'GPS permission denied. Never pretending a live fix.'
+                : location.permission === 'timeout'
+                  ? 'GPS timed out. Using the planned destination.'
+                  : 'Using the planned city centre until GPS is allowed. '}
+              {location.permission !== 'denied' && (
+                <button className="underline" onClick={() => void requestLocation()}>
+                  Allow location
+                </button>
+              )}
             </p>
           )}
         </div>
@@ -156,18 +141,19 @@ export function LiveTripPage() {
             </div>
             <div>
               <p className="text-teal-100">Travel</p>
-              <p className="text-lg">{liveRoute?.source === 'osrm' ? '🛣️ Road' : '🚕 Estimate'}</p>
+              <p className="text-lg">{liveRoute?.source === 'osrm' ? '🛣️ Road' : 'Route unavailable'}</p>
             </div>
           </div>
-          {liveRoute?.source === 'haversine' && (
-            <p className="mt-2 text-xs text-teal-100">Straight-line estimate — routing API unavailable</p>
-          )}
+          <p className="mt-3 text-xs text-teal-100">Trip health: {health}</p>
+          {liveRoute?.source === 'haversine' || liveRoute?.source === 'unavailable' ? (
+            <p className="mt-2 text-xs text-teal-100">Route unavailable — distance is a straight-line estimate</p>
+          ) : null}
         </div>
         <div className="rounded-3xl bg-white p-5 shadow-card dark:bg-ink-800">
           <p className="text-xs uppercase tracking-[0.16em] text-ink-400">Live conditions</p>
           {weatherError ? (
             <div className="mt-3">
-              <p>Live weather is temporarily unavailable.</p>
+              <p>Weather feed did not respond. Retry to load Open-Meteo.</p>
               <Button size="sm" className="mt-3" onClick={() => void hydrate()}>
                 Retry
               </Button>
@@ -177,25 +163,34 @@ export function LiveTripPage() {
               <li>
                 🌤️ Weather: {conditions.weather.tempC}°C
                 {conditions.weather.apparentTempC != null ? ` (feels ${conditions.weather.apparentTempC}°)` : ''}
-                {conditions.weather.stale ? ' · stale' : ''}
+                {conditions.weather.stale ? ' · CACHED' : ' · LIVE'}
+                {' · Open-Meteo'}
               </li>
+              {conditions.weather.fetchedAt && (
+                <li className="text-ink-400">
+                  Last updated:{' '}
+                  {new Date(conditions.weather.fetchedAt).toLocaleTimeString('en-IN', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}
+                  {conditions.weather.stale ? ' · cached' : ''}
+                </li>
+              )}
               <li>🌧️ Rain probability: {conditions.weather.rainProbability}%</li>
               <li>
-                🚦 Traffic: Live traffic unavailable
+                Traffic: Unavailable
+                <span className="block text-[11px] text-ink-400">Source: No live traffic provider connected</span>
               </li>
               <li>
-                👥 Crowd: Live crowd data unavailable
+                Crowd level: Unavailable
+                <span className="block text-[11px] text-ink-400">Source: No live crowd provider connected</span>
               </li>
-              <li>
-                🕐 Opening status:{' '}
-                {next?.hoursKnown !== true
-                  ? 'Opening hours unavailable'
-                  : conditions.closures.includes(next?.id ?? '')
-                    ? 'Closed'
-                    : next
-                      ? 'Listed hours available'
-                      : '—'}
-              </li>
+              {next?.hoursKnown === true ? (
+                <li>
+                  🕐 Hours:{' '}
+                  {conditions.closures.includes(next.id) ? 'Closed' : next.openingHours || 'Listed hours on file'}
+                </li>
+              ) : null}
             </ul>
           )}
           {conditions.weather.hourly && conditions.weather.hourly.length > 0 && (
@@ -213,6 +208,7 @@ export function LiveTripPage() {
       </div>
 
       <AdaptationCard />
+      <DataSources />
 
       <div className="rounded-3xl bg-white p-5 shadow-card dark:bg-ink-800">
         <p className="text-xs uppercase tracking-[0.16em] text-ink-400">Your Best Next Move</p>
@@ -234,63 +230,6 @@ export function LiveTripPage() {
           Go There
         </Button>
       </div>
-
-      <section>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <h2 className="font-display text-2xl">Near You</h2>
-          <div className="flex gap-2 text-xs">
-            {(['distance', 'rating', 'price'] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => setSort(s)}
-                className={`rounded-full px-3 py-1 capitalize ${nearbySort === s ? 'bg-teal-800 text-white' : 'bg-white dark:bg-ink-800'}`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-        {nearbyLoading && <p className="mt-3 text-sm text-ink-400">Finding places around you…</p>}
-        <div className="mt-3 flex gap-2 overflow-x-auto no-scrollbar">
-          <button
-            onClick={() => setNearby('all')}
-            className={`rounded-full px-3 py-1 text-sm ${nearbyFilter === 'all' ? 'bg-teal-800 text-white' : 'bg-white dark:bg-ink-800'}`}
-          >
-            All
-          </button>
-          {NEAR.map((n) => (
-            <button
-              key={n.id}
-              onClick={() => setNearby(n.id)}
-              className={`whitespace-nowrap rounded-full px-3 py-1 text-sm ${nearbyFilter === n.id ? 'bg-teal-800 text-white' : 'bg-white dark:bg-ink-800'}`}
-            >
-              {n.icon} {n.label}
-            </button>
-          ))}
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {nearby.slice(0, 12).map((p) => (
-            <button
-              key={p.id}
-              onClick={() => select(p.id)}
-              className="flex items-center gap-3 rounded-3xl bg-white p-3 text-left shadow-card dark:bg-ink-800"
-            >
-              <PlaceImage src={p.image} name={p.name} lat={p.lat} lng={p.lng} category={p.category} imgClassName="size-14 rounded-2xl" />
-              <span>
-                <span className="block font-medium">{p.name}</span>
-                <span className="text-xs text-ink-500">
-                  {formatKm(haversineKm(origin, p))}
-                  {p.ratingKnown === true ? ` · ⭐ ${p.rating}` : ' · Rating unavailable'}
-                  {p.priceKnown !== true ? ' · Price unavailable' : p.estimatedCost ? ` · ${formatInr(p.estimatedCost)}` : ''}
-                </span>
-              </span>
-            </button>
-          ))}
-          {!nearbyLoading && nearby.length === 0 && (
-            <p className="text-sm text-ink-400">No nearby results yet. Allow location or wait for OSM to load.</p>
-          )}
-        </div>
-      </section>
 
       <TripMap height={360} />
       <SafetyPanel />

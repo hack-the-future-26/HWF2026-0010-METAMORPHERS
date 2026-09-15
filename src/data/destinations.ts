@@ -77,6 +77,20 @@ export const DESTINATIONS: Destination[] = [
     highlights: ['Marina Beach', 'Kapaleeshwarar Temple', 'Fort St. George', 'Mahabalipuram day trip'],
   },
   {
+    id: 'madurai',
+    name: 'Madurai',
+    city: 'Madurai',
+    state: 'Tamil Nadu',
+    country: 'India',
+    tagline: 'Meenakshi Temple and jasmine-scented streets.',
+    image: img('Meenakshi Amman Temple.jpg'),
+    lat: 9.9252,
+    lng: 78.1198,
+    timezone: 'Asia/Kolkata',
+    famousFor: 'Meenakshi Amman Temple, Thirumalai Nayakkar Palace, jigarthanda',
+    highlights: ['Meenakshi Amman Temple', 'Thirumalai Nayakkar Palace', 'Gandhi Memorial Museum', 'Vaigai'],
+  },
+  {
     id: 'kolkata',
     name: 'Kolkata',
     state: 'West Bengal',
@@ -338,40 +352,185 @@ export const DESTINATIONS: Destination[] = [
   },
 ]
 
-export function getDestination(id: string) {
+const UNRESOLVED: Destination = {
+  id: 'unresolved',
+  name: 'Unknown destination',
+  state: '',
+  country: '',
+  tagline: '',
+  image: DESTINATIONS[0].image,
+  lat: 0,
+  lng: 0,
+  timezone: 'UTC',
+}
+
+export function findDestination(id?: string | null): Destination | undefined {
+  if (!id) return undefined
   const found = extras.get(id) ?? DESTINATIONS.find((d) => d.id === id)
   if (found) return found
   const m = /^geo_(-?\d+\.?\d*)_(-?\d+\.?\d*)/.exec(id)
   if (m) {
     return {
       id,
-      name: 'Selected location',
-      state: '',
-      country: '',
-      tagline: `${Number(m[1]).toFixed(4)}, ${Number(m[2]).toFixed(4)}`,
-      image: DESTINATIONS.find((d) => d.id === 'vizag')!.image,
+      name: extras.get(id)?.name || 'Selected location',
+      displayName: extras.get(id)?.displayName,
+      city: extras.get(id)?.city,
+      state: extras.get(id)?.state || '',
+      country: extras.get(id)?.country || '',
+      tagline: extras.get(id)?.tagline || `${Number(m[1]).toFixed(4)}, ${Number(m[2]).toFixed(4)}`,
+      image: DESTINATIONS[0].image,
       lat: Number(m[1]),
       lng: Number(m[2]),
-      timezone: 'Asia/Kolkata',
+      timezone: extras.get(id)?.timezone || 'UTC',
     }
   }
-  return DESTINATIONS.find((d) => d.id === 'vizag')!
+  return undefined
+}
+
+/** Never substitutes Visakhapatnam for an unknown id. */
+export function getDestination(id: string): Destination {
+  return findDestination(id) ?? { ...UNRESOLVED, id, name: id || 'Unknown destination' }
+}
+
+const SEARCH_ALIASES: Record<string, string> = {
+  madhurai: 'madurai',
+  bangalore: 'bengaluru',
+  bombay: 'mumbai',
+  madras: 'chennai',
+  calcutta: 'kolkata',
+  benares: 'varanasi',
+  pondicherry: 'pondy',
+  visakhapatnam: 'vizag',
+}
+
+const STREET_LIKE = /\b(lane|street|road|nagar|colony|layout|sector|block|avenue|marg)\b/i
+const OFF_CITY = /\b(moka|mauritius)\b/i
+const INDIA_LAT = { min: 6.5, max: 35.7 }
+const INDIA_LNG = { min: 68.1, max: 97.4 }
+
+export function isStreetLevelName(name?: string | null) {
+  return STREET_LIKE.test(String(name || ''))
+}
+
+export type CityHealHint = {
+  name?: string
+  city?: string
+  country?: string
+  displayName?: string
+  state?: string
+  lat?: number
+  lng?: number
+}
+
+function healBlob(d?: CityHealHint | null, query?: string) {
+  return `${d?.name ?? ''} ${d?.city ?? ''} ${d?.country ?? ''} ${d?.displayName ?? ''} ${query ?? ''}`
+}
+
+export function coordsOutsideIndia(lat?: number, lng?: number) {
+  if (lat == null || lng == null) return false
+  if (lat === 0 && lng === 0) return false
+  return lat < INDIA_LAT.min || lat > INDIA_LAT.max || lng < INDIA_LNG.min || lng > INDIA_LNG.max
+}
+
+/** Street / Photon house hit / Mauritius-Moka — Food and Stay need the parent Indian city. */
+export function needsCityHeal(d?: CityHealHint | null, query?: string) {
+  const blob = healBlob(d, query)
+  if (isStreetLevelName(blob)) return true
+  if (OFF_CITY.test(blob)) return true
+  if (d?.country && !/india/i.test(d.country) && OFF_CITY.test(d.country + ' ' + (d.city ?? ''))) return true
+  if (coordsOutsideIndia(d?.lat, d?.lng) && (isStreetLevelName(blob) || OFF_CITY.test(blob) || cityHealQuery(d, query))) {
+    return true
+  }
+  return false
+}
+
+/** First Indian city token we can recover from a street-level Photon label. */
+export function cityHealQuery(d?: CityHealHint | null, query?: string) {
+  const parts = [query, d?.displayName, d?.name, d?.city]
+    .filter(Boolean)
+    .join(', ')
+    .split(/[,/|]/)
+    .map((s) => s.replace(STREET_LIKE, ' ').replace(OFF_CITY, ' ').replace(/\s+/g, ' ').trim())
+    .filter((s) => s && !/^selected location$/i.test(s))
+  for (const part of parts) {
+    const lower = part.toLowerCase()
+    if (SEARCH_ALIASES[lower]) return SEARCH_ALIASES[lower]
+    const catalog = DESTINATIONS.find(
+      (c) => c.id === lower || c.name.toLowerCase() === lower || (c.city ?? '').toLowerCase() === lower,
+    )
+    if (catalog) return catalog.id
+    const first = lower.split(/\s+/)[0]
+    if (SEARCH_ALIASES[first]) return SEARCH_ALIASES[first]
+    const firstHit = DESTINATIONS.find((c) => c.id === first || c.name.toLowerCase() === first)
+    if (firstHit) return firstHit.id
+  }
+  return parts[0] || ''
+}
+
+export function catalogParentCity(d?: CityHealHint | null, query?: string): Destination | undefined {
+  const q = cityHealQuery(d, query).toLowerCase()
+  if (!q) return undefined
+  const aliased = SEARCH_ALIASES[q] || q
+  return DESTINATIONS.find(
+    (c) =>
+      c.id === aliased ||
+      c.id === q ||
+      c.name.toLowerCase() === aliased ||
+      c.name.toLowerCase() === q ||
+      (c.city ?? '').toLowerCase() === aliased,
+  )
+}
+
+/** Prefer a parent city over a street-level Photon hit for lodging search. */
+export function lodgingCityName(d: { name: string; city?: string; displayName?: string; country?: string; lat?: number; lng?: number }) {
+  const parent = needsCityHeal(d) ? catalogParentCity(d) : undefined
+  if (parent) return parent.name
+  if (OFF_CITY.test(`${d.city ?? ''} ${d.country ?? ''}`)) {
+    const stripped = d.name.replace(STREET_LIKE, ' ').split(',')[0].trim()
+    const aliased = SEARCH_ALIASES[stripped.toLowerCase()]
+    if (aliased) {
+      const hit = DESTINATIONS.find((c) => c.id === aliased)
+      if (hit) return hit.name
+    }
+    if (stripped) return stripped
+  }
+  if (isStreetLevelName(d.name) && d.city && !isStreetLevelName(d.city) && !OFF_CITY.test(d.city)) return d.city
+  if (d.city && !isStreetLevelName(d.city) && !OFF_CITY.test(d.city)) return d.city
+  return d.name
+}
+
+export function destDisplayLabel(d: {
+  name: string
+  city?: string
+  displayName?: string
+  country?: string
+  state?: string
+  lat?: number
+  lng?: number
+}) {
+  const parent = needsCityHeal(d) ? catalogParentCity(d) : undefined
+  const name = parent ? parent.name : lodgingCityName(d)
+  const state = parent?.state || d.state
+  return state ? `${name}, ${state}` : name
 }
 
 export function searchDestinations(q: string) {
   const s = q.trim().toLowerCase()
-  const extra = [...extras.values()].filter((d) => !d.country || /india/i.test(d.country))
+  const aliased = SEARCH_ALIASES[s] || s
+  const extra = [...extras.values()]
   const catalog = [...extra, ...DESTINATIONS]
   if (!s) return DESTINATIONS
-  return catalog.filter(
-    (d) =>
-      d.name.toLowerCase().includes(s) ||
-      d.state.toLowerCase().includes(s) ||
-      d.country.toLowerCase().includes(s) ||
-      d.tagline.toLowerCase().includes(s) ||
-      d.famousFor?.toLowerCase().includes(s) ||
-      d.id.includes(s),
-  )
+  const seen = new Set<string>()
+  const out: Destination[] = []
+  for (const d of catalog) {
+    if (seen.has(d.id)) continue
+    const hay = `${d.name} ${d.city ?? ''} ${d.state} ${d.country} ${d.tagline} ${d.famousFor ?? ''} ${d.id} ${d.displayName ?? ''}`.toLowerCase()
+    if (hay.includes(s) || d.id === aliased || d.name.toLowerCase() === aliased || (d.city ?? '').toLowerCase() === aliased) {
+      seen.add(d.id)
+      out.push(d)
+    }
+  }
+  return out
 }
 
 export function featuredDestinations() {

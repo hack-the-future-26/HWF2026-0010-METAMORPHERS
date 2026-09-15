@@ -9,6 +9,7 @@
     "dev:api": "node server/index.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -43,6 +44,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "vite": "^8.2.2",
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "vitest": "^3.2.4"
   }
 }

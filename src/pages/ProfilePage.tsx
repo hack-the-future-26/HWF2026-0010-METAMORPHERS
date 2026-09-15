@@ -1,77 +1,78 @@
 import { STYLES, TRANSPORT } from '@/data/catalog'
+import { GUEST_USER } from '@/data/user'
 import { useAppStore } from '@/store/useAppStore'
+import { logoutAccount, patchMe } from '@/services/backend'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useState } from 'react'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 export function ProfilePage() {
   const user = useAppStore((s) => s.user)
+  const signedIn = useAppStore((s) => s.signedIn)
+  const personalMatch = useAppStore((s) => s.personalMatch)
   const updateUser = useAppStore((s) => s.updateUser)
   const updatePreferences = useAppStore((s) => s.updatePreferences)
   const theme = useAppStore((s) => s.theme)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
+  const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(user.name)
+
+  if (!signedIn) return <Navigate to="/login?next=/profile" replace />
+
+  const signOut = async () => {
+    await logoutAccount()
+    useAppStore.setState({ user: GUEST_USER, signedIn: false, personalMatch: null })
+    toast.success('Signed out')
+    navigate('/')
+  }
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <h1 className="font-display text-4xl">Profile</h1>
-      <div className="rounded-3xl bg-white p-6 shadow-card dark:bg-ink-800">
-        <div className="flex items-center gap-4">
-          <div className="grid size-16 place-items-center rounded-full bg-teal-800 text-2xl text-white">
-            {user.name.slice(0, 1)}
+
+      <div className="rounded-[1.8rem] bg-white p-6 shadow-card dark:bg-ink-800">
+          <div className="flex items-center gap-4">
+            <div className="grid size-16 place-items-center rounded-full bg-teal-800 text-2xl text-white">
+              {(user.name || 'Y').slice(0, 1)}
+            </div>
+            <div>
+              {editing ? (
+                <Input value={name} onChange={(e) => setName(e.target.value)} />
+              ) : (
+                <p className="font-display text-2xl">{user.name}</p>
+              )}
+              <p className="text-sm text-ink-500">{user.email}</p>
+              {personalMatch != null && (
+                <p className="mt-1 text-xs text-teal-800 dark:text-teal-300">Personalized {personalMatch}% match from your feedback</p>
+              )}
+            </div>
           </div>
-          <div>
-            {editing ? (
-              <Input value={name} onChange={(e) => setName(e.target.value)} />
-            ) : (
-              <p className="font-display text-2xl">{user.name}</p>
-            )}
-            <p className="text-sm text-ink-500">{user.email}</p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Button
+              onClick={() => {
+                if (editing) {
+                  updateUser({ name })
+                  void patchMe({ name }).catch(() => {})
+                  toast.success('Profile updated')
+                }
+                setEditing(!editing)
+              }}
+            >
+              {editing ? 'Save name' : 'Edit name'}
+            </Button>
+            <Button variant="secondary" onClick={toggleTheme}>
+              Theme · {theme}
+            </Button>
+            <Button variant="ghost" onClick={() => void signOut()}>
+              Log out
+            </Button>
           </div>
-        </div>
-        <div className="mt-5 flex flex-wrap gap-2">
-          <Button
-            onClick={() => {
-              if (editing) {
-                updateUser({ name })
-                toast.success('Profile updated')
-              }
-              setEditing(!editing)
-            }}
-          >
-            {editing ? 'Save name' : 'Edit Preferences'}
-          </Button>
-          <Button variant="secondary" onClick={toggleTheme}>
-            Theme · {theme}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              updatePreferences({ notifications: !user.preferences.notifications })
-              toast.success(user.preferences.notifications ? 'Notifications off' : 'Notifications on')
-            }}
-          >
-            Notifications · {user.preferences.notifications ? 'On' : 'Off'}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              const next = user.preferences.language === 'English' ? 'తెలుగు' : 'English'
-              updatePreferences({ language: next })
-              toast.success(`Language: ${next}`)
-            }}
-          >
-            Language · {user.preferences.language}
-          </Button>
-          <Button variant="ghost" onClick={() => toast.message('Demo privacy: itinerary stays on this device via localStorage.')}>
-            Privacy
-          </Button>
-        </div>
       </div>
 
-      <section className="rounded-3xl bg-white p-6 shadow-card dark:bg-ink-800">
+      <section className="rounded-[1.8rem] bg-white p-6 shadow-card dark:bg-ink-800">
         <p className="font-medium">Travel preferences</p>
         <div className="mt-3 flex flex-wrap gap-2">
           {STYLES.map((s) => {
@@ -105,7 +106,7 @@ export function ProfilePage() {
           onChange={(e) => updatePreferences({ defaultBudget: Number(e.target.value) })}
           className="mt-2 w-full accent-teal-700"
         />
-        <p className="mt-5 font-medium">Transportation preference</p>
+        <p className="mt-5 font-medium">How you like to move</p>
         <div className="mt-2 flex flex-wrap gap-2">
           {TRANSPORT.map((t) => {
             const on = user.preferences.transport.includes(t.id)

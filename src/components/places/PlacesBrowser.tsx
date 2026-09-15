@@ -1,13 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Heart } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Place } from '@/types'
 import { useAppStore } from '@/store/useAppStore'
-import { getDestination } from '@/data/destinations'
+import { getDestination, lodgingCityName } from '@/data/destinations'
 import { areaOrigin } from '@/lib/origin'
 import { formatKm, haversineKm } from '@/lib/utils'
-import { HOURS_UNAVAILABLE, OSM_UNAVAILABLE, PRICE_UNAVAILABLE, honestRating } from '@/lib/osmCopy'
+import { honestHours, honestPrice, honestRating } from '@/lib/osmCopy'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { PlaceMiniMap } from '@/components/map/PlaceMiniMap'
@@ -39,10 +39,22 @@ export function PlacesBrowser({
   showNavigate?: boolean
 }) {
   const [cat, setCat] = useState(filters[0]?.id ?? 'all')
+  const filterIds = filters.map((f) => f.id).join(',')
+  useEffect(() => {
+    if (!filters.some((f) => f.id === cat)) {
+      setCat(filters[0]?.id ?? 'all')
+      return
+    }
+    const fn = filters.find((f) => f.id === cat)?.match
+    if (cat === 'famous' && fn && places.length && !places.some(fn)) {
+      const allId = filters.some((f) => f.id === 'all') ? 'all' : filters[0]?.id
+      if (allId && allId !== cat) setCat(allId)
+    }
+  }, [filterIds, cat, places, filters])
   const [mapId, setMapId] = useState<string | null>(null)
   const destId = useAppStore((s) => s.trip?.destinationId ?? s.planner.destinationId)
   const origin = areaOrigin(destId)
-  const destName = destId ? getDestination(destId).name : undefined
+  const destName = destId ? lodgingCityName(getDestination(destId)) : undefined
   const add = useAppStore((s) => s.addPlaceToTrip)
   const save = useAppStore((s) => s.savePlace)
   const unsave = useAppStore((s) => s.unsavePlace)
@@ -50,8 +62,6 @@ export function PlacesBrowser({
   const select = useAppStore((s) => s.setSelectedPlace)
   const online = useAppStore((s) => s.online)
   const navigate = useNavigate()
-  const live = true
-
   const list = useMemo(() => {
     const fn = filters.find((f) => f.id === cat)?.match ?? (() => true)
     return [...places]
@@ -89,7 +99,7 @@ export function PlacesBrowser({
         </div>
       )}
       {!loading && list.length === 0 && !error && (
-        <p className="mt-8 text-sm text-ink-500">No matching places from OSM in this area.</p>
+        <p className="mt-8 text-sm text-ink-500">No matching named places in this area yet. Try a wider city or retry.</p>
       )}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -110,24 +120,28 @@ export function PlacesBrowser({
               <div className="p-4">
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-medium">{p.name}</h3>
-                  <Badge>{honestRating(p, live)}</Badge>
+                  <Badge>{honestRating(p)}</Badge>
                 </div>
                 <p className="mt-1 text-xs text-ink-500">
-                  {p.styles[0] ?? p.category} · {formatKm(km)} · {p.address || OSM_UNAVAILABLE}
-                  {p.source === 'osm' ? ' · OSM' : ''}
+                  {p.styles[0] ?? p.category} · {formatKm(km)}
+                  {p.address ? ` · ${p.address}` : ''}
                 </p>
-                <p className="mt-2 line-clamp-2 text-xs text-ink-500">{p.description || OSM_UNAVAILABLE}</p>
+                {p.description ? <p className="mt-2 line-clamp-2 text-xs text-ink-500">{p.description}</p> : null}
                 <div className="mt-2 space-y-1 text-[11px] text-ink-400">
-                  <p>Hours: {p.hoursKnown === true ? p.openingHours : HOURS_UNAVAILABLE}</p>
-                  <p>Price: {PRICE_UNAVAILABLE}</p>
-                  {p.website ? (
-                    <a href={p.website} className="text-teal-800 underline" target="_blank" rel="noreferrer">
-                      {p.website}
-                    </a>
-                  ) : (
-                    <p>Website: {OSM_UNAVAILABLE}</p>
-                  )}
-                  {p.phone ? <p>{p.phone}</p> : <p>Contact: {OSM_UNAVAILABLE}</p>}
+                  {honestHours(p) ? <p>Hours: {honestHours(p)}</p> : null}
+                  {honestPrice(p) ? <p>{honestPrice(p)}</p> : null}
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {p.phone ? (
+                      <a href={`tel:${p.phone.replace(/\s/g, '')}`} className="rounded-full bg-teal-800 px-2.5 py-1 text-[11px] text-white">
+                        Call {p.phone}
+                      </a>
+                    ) : null}
+                    {p.website ? (
+                      <a href={p.website} className="rounded-full bg-sand-100 px-2.5 py-1 text-[11px] text-teal-800 dark:bg-white/8" target="_blank" rel="noreferrer">
+                        Official site
+                      </a>
+                    ) : null}
+                  </div>
                 </div>
                 {mapId === p.id && <div className="mt-3"><PlaceMiniMap lat={p.lat} lng={p.lng} /></div>}
                 <div className="mt-4 flex flex-wrap gap-2">

@@ -1,7 +1,8 @@
 import { MapContainer, Marker, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { mapsService } from '@/services/mapsService'
+import { fetchMapStyle } from '@/services/backend'
 
 const pin = L.divIcon({
   className: '',
@@ -20,10 +21,22 @@ function Invalidate() {
 }
 
 export function PlaceMiniMap({ lat, lng }: { lat: number; lng: number }) {
+  const [tiles, setTiles] = useState({
+    light: mapsService.lightTiles,
+    attribution: mapsService.attribution,
+  })
+  useEffect(() => {
+    void fetchMapStyle()
+      .then((s) => {
+        mapsService.applyStyle(s)
+        setTiles({ light: s.light, attribution: s.attribution })
+      })
+      .catch(() => {})
+  }, [])
   return (
     <div className="mb-4 h-52 overflow-hidden rounded-3xl">
       <MapContainer
-        key={`${lat.toFixed(5)},${lng.toFixed(5)}`}
+        key={`${lat.toFixed(5)},${lng.toFixed(5)}-${tiles.light}`}
         center={[lat, lng]}
         zoom={16}
         className="map-tiles h-full w-full"
@@ -31,7 +44,7 @@ export function PlaceMiniMap({ lat, lng }: { lat: number; lng: number }) {
         dragging={false}
         zoomControl={false}
       >
-        <TileLayer attribution={mapsService.attribution} url={mapsService.lightTiles} />
+        <TileLayer attribution={tiles.attribution} url={tiles.light} />
         <Invalidate />
         <Marker position={[lat, lng]} icon={pin} />
       </MapContainer>

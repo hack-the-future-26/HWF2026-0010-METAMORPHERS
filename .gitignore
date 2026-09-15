@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 server/data/checklists.json
+server/data/app.json
 dist-ssr
 *.local
 .env

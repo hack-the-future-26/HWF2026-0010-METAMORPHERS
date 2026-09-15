@@ -1,4 +1,5 @@
-/** First-visit survival notes for someone who just landed and does not know the city. */
+/** First-hours notes for someone who just reached the city. */
+import { cityPicks, foodAnswer, hotelAnswer, planAnswer } from './catalog.mjs'
 
 export const CITIES = {
   delhi: { name: 'New Delhi', state: 'Delhi', lat: 28.6139, lng: 77.209, lang: 'Hindi', langCode: 'hi' },
@@ -34,7 +35,7 @@ const DETAIL = {
     fromAirport: 'Take the Airport Express metro to New Delhi (~45–60 min) or a prepaid taxi / Uber. Ignore touts at the curb.',
     firstWalk: 'India Gate lawns at sunset — open, lit, easy to orient yourself.',
     firstMeal: 'Chole bhature or a simple thali around Connaught Place.',
-    sim: 'Jio or Airtel kiosk in T3 arrivals. Passport + one photo.',
+    sim: 'Jio or Airtel kiosk in T3 arrivals. Bring ID.',
     money: 'UPI works almost everywhere. Keep ₹500–1000 cash for autos.',
     dont: 'Do not hop into an unmarked airport taxi. Use prepaid or an app.',
     stayArea: 'Connaught Place or Aerocity if you land late.',
@@ -44,7 +45,7 @@ const DETAIL = {
     fromAirport: 'Prepaid taxi or Uber to South Mumbai is 60–90 min. Local trains later, not on day one with luggage.',
     firstWalk: 'Marine Drive at dusk — the Queen’s Necklace is the easiest first view.',
     firstMeal: 'Vada pav and cutting chai, then a sit-down thali in Fort / Colaba.',
-    sim: 'Counters at arrivals. Aadhaar helps residents; tourists need passport.',
+    sim: 'Airport counters. Bring ID (Aadhaar or passport).',
     money: 'UPI + a little cash. Taxi meters or apps only.',
     dont: 'Avoid peak local-train crush with bags. Use taxi the first day.',
     stayArea: 'Colaba or Bandra depending on flights vs nightlife.',
@@ -274,7 +275,7 @@ const DETAIL = {
     fromAirport: 'Short cab to Leh town. Day 1–2: rest. No Pangong, no pass.',
     firstWalk: 'Leh market only. Drink water. Skip alcohol on arrival.',
     firstMeal: 'Light food. Thukpa or simple rice. AMS is real.',
-    sim: 'Postpaid tourist SIMs in the bazaar — prepaid often fails up here.',
+    sim: 'Local SIMs in the bazaar — prepaid often fails up here.',
     money: 'ATMs can be dry. Carry cash from Delhi.',
     dont: 'Do not fly in and drive to Khardung La the same day.',
     stayArea: 'Changspa / Main Bazaar for walking.',
@@ -347,7 +348,7 @@ export function buildArrival(id) {
     fromAirport: 'Use a prepaid taxi or app cab. Agree the fare before you start if there is no meter.',
     firstWalk: 'Start with the main public square or waterfront — open, lit, easy to leave.',
     firstMeal: 'Eat at a busy local place. Ask for medium spice.',
-    sim: 'Buy a tourist SIM at the airport with your passport.',
+    sim: 'Local prepaid SIMs are sold at airport kiosks and city stores. Bring ID.',
     money: 'UPI plus a little cash.',
     dont: 'Do not follow strangers offering “special” tickets.',
     stayArea: 'Stay near the historic core or the main boulevard on night one.',
@@ -377,9 +378,11 @@ export function buildArrival(id) {
     ],
     phrases: phrases.map((p) => ({ ...p, lang: city.langCode })),
     actions: [
+      { id: 'plan', label: 'Plan a 3-day trip', prompt: `Plan a 3-day trip in ${city.name} with food and hotels.` },
       { id: 'lost', label: 'I am lost', prompt: `I just arrived in ${city.name} and I am lost. What should I do in the next 15 minutes?` },
-      { id: 'hungry', label: 'I am hungry', prompt: `I just arrived in ${city.name} and I am hungry. What should a first-timer eat and where, simply?` },
-      { id: 'sim', label: 'I need a SIM', prompt: `How do I get a working phone SIM as a new arrival in ${city.name}?` },
+      { id: 'hungry', label: 'Famous food', prompt: `What famous food should I eat in ${city.name} and where?` },
+      { id: 'hotel', label: 'Hotels + contacts', prompt: `Name hotels in ${city.name} with phone numbers and websites.` },
+      { id: 'sim', label: 'I need a SIM', prompt: `How do I get a working phone SIM in ${city.name}?` },
       { id: 'ride', label: 'Airport to hotel', prompt: `How do I go from the airport to a first-night hotel in ${city.name} safely?` },
     ],
   }
@@ -388,21 +391,27 @@ export function buildArrival(id) {
 export function answerAsLocal(prompt, arrival, weather) {
   const q = (prompt || '').toLowerCase()
   const w = weather?.summary ? ` Weather now: ${weather.tempC}°C, ${weather.summary}.` : ''
+  if (/plan|itinerary|3-day|4-day|schedule/.test(q) && /trip|visit|day|plan/.test(q)) {
+    return planAnswer(arrival.id, arrival, weather)
+  }
   if (/lost|where am i|orient/.test(q)) {
     const landmark = String(arrival.firstWalk.split('—')[0] || arrival.name).replace(/[.]+$/, '')
     return `Stop walking. Drop a pin on your map and share it with one person. Walk toward a lit main road, hotel, or ${landmark}. Do not follow a stranger “shortcut”. Emergency is 112.${w}`
   }
-  if (/hungry|eat|food|breakfast|lunch|dinner/.test(q)) {
-    return `${arrival.firstMeal} Sit where others are eating. Drink sealed water on day one.${w}`
+  if (/visa|e-visa|passport/.test(q)) {
+    return `Visa and entry rules depend on your passport and the country you are visiting. Use the official government site for that destination — YatraSense does not assume where you are travelling from.`
   }
-  if (/sim|phone|network|internet/.test(q)) {
+  if (/hungry|eat|food|breakfast|lunch|dinner|famous food|dish/.test(q)) {
+    return foodAnswer(arrival.id, arrival) + w
+  }
+  if (/sim|network|internet/.test(q) && !/hotel/.test(q)) {
     return arrival.sim
   }
-  if (/taxi|airport|cab|uber|ola|train|metro/.test(q)) {
+  if (/taxi|airport|cab|uber|ola|train|metro/.test(q) && !/hotel|stay/.test(q)) {
     return arrival.fromAirport
   }
-  if (/hotel|stay|sleep/.test(q)) {
-    return `For night one stay near ${arrival.stayArea}. Confirm the pin before you pay the driver.`
+  if (/hotel|stay|sleep|contact|phone number|reservation/.test(q)) {
+    return hotelAnswer(arrival.id, arrival)
   }
   if (/safe|danger|scam|tout/.test(q)) {
     return `${arrival.dont} If you feel unsafe, enter a hotel lobby or pharmacy and call 112.`
@@ -410,5 +419,6 @@ export function answerAsLocal(prompt, arrival, weather) {
   if (/rain|weather|hot|cold/.test(q)) {
     return w.trim() || `Check the live weather card. In ${arrival.name}, plan the heavy walking for morning or evening.`
   }
-  return `You are new in ${arrival.name}, ${arrival.state}. First ride: ${arrival.fromAirport} First walk: ${arrival.firstWalk} ${w} Ask me “I am lost”, “I am hungry”, or “I need a SIM” if you want a shorter answer.`
+  const picks = cityPicks(arrival.id)
+  return `You are in ${arrival.name}, ${arrival.state}. First ride: ${arrival.fromAirport} Eat: ${picks.foods[0]?.dish || arrival.firstMeal}. Stay: ${picks.hotels[0]?.name || arrival.stayArea}. ${w} Ask me to plan the trip, name famous food, or list hotels with contacts.`
 }

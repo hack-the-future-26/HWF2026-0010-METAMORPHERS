@@ -1,8 +1,9 @@
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { getPlace, PLACES } from '@/data/places'
 import { mapsService } from '@/services/mapsService'
+import { fetchMapStyle } from '@/services/backend'
 import { useAppStore } from '@/store/useAppStore'
 import { activeOrigin, areaOrigin } from '@/lib/origin'
 import { Button } from '@/components/ui/Button'
@@ -69,6 +70,19 @@ export function TripMap({ height = 420 }: { height?: number }) {
   const plannerDest = useAppStore((s) => s.planner.destinationId)
   const destId = trip?.destinationId ?? plannerDest
   const liveStarted = useAppStore((s) => s.liveStarted)
+  const [tiles, setTiles] = useState({
+    light: mapsService.lightTiles,
+    dark: mapsService.darkTiles,
+    attribution: mapsService.attribution,
+  })
+  useEffect(() => {
+    void fetchMapStyle()
+      .then((s) => {
+        mapsService.applyStyle(s)
+        setTiles(s)
+      })
+      .catch(() => {})
+  }, [])
   const origin = liveStarted ? activeOrigin(location, destId) : areaOrigin(destId)
 
   const day = trip?.daysPlan[mapDay]
@@ -93,7 +107,7 @@ export function TripMap({ height = 420 }: { height?: number }) {
   })
 
   const nextId = day?.activities.find((a) => a.kind === 'place')?.placeId
-  const road = liveRoute?.geometry?.length ? liveRoute.geometry : itineraryPts
+  const road = liveRoute?.source === 'osrm' && liveRoute.geometry.length ? liveRoute.geometry : []
 
   return (
     <div className="overflow-hidden rounded-3xl bg-white shadow-card dark:bg-ink-800">
@@ -128,15 +142,15 @@ export function TripMap({ height = 420 }: { height?: number }) {
       </div>
       <div style={{ height }} className="relative">
         <MapContainer
-          key={`${destId ?? 'map'}-${origin.lat.toFixed(3)}-${origin.lng.toFixed(3)}`}
+          key={`${destId ?? 'map'}-${origin.lat.toFixed(3)}-${origin.lng.toFixed(3)}-${tiles.light}`}
           center={[origin.lat, origin.lng]}
           zoom={13}
           className="map-tiles h-full w-full"
           scrollWheelZoom
         >
           <TileLayer
-            attribution={mapsService.attribution}
-            url={theme === 'dark' ? mapsService.darkTiles : mapsService.lightTiles}
+            attribution={tiles.attribution}
+            url={theme === 'dark' ? tiles.dark : tiles.light}
           />
           <FitCity lat={origin.lat} lng={origin.lng} points={itineraryPts} />
           <Recenter lat={origin.lat} lng={origin.lng} enabled={followUser} />
@@ -157,20 +171,23 @@ export function TripMap({ height = 420 }: { height?: number }) {
                 <button className="text-left" onClick={() => select(p.id)}>
                   <strong>{p.name}</strong>
                   <br />
-                  {p.ratingKnown === false
-                    ? 'Not available from OSM'
-                    : `⭐ ${p.rating}`}
+                  {p.ratingKnown === true && p.rating > 0 ? `⭐ ${p.rating}` : `${p.reviewCount ?? 0} reviews`}
                 </button>
               </Popup>
             </Marker>
           ))}
-          {road.length > 1 && (
+          {road.length > 1 && liveRoute?.source === 'osrm' && (
             <Polyline
               positions={road}
-              pathOptions={{ color: liveRoute?.source === 'osrm' ? '#0f6e6a' : '#94a3b8', weight: 4, opacity: 0.9 }}
+              pathOptions={{ color: '#0f6e6a', weight: 4, opacity: 0.9 }}
             />
           )}
         </MapContainer>
+        {liveRoute && liveRoute.source !== 'osrm' && (
+          <p className="pointer-events-none absolute bottom-3 left-3 z-[500] rounded-full bg-ink-900/80 px-3 py-1 text-[11px] text-white">
+            Route unavailable
+          </p>
+        )}
       </div>
     </div>
   )

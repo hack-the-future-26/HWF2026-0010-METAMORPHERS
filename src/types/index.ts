@@ -102,6 +102,8 @@ export interface User {
 export interface Destination {
   id: string
   name: string
+  displayName?: string
+  city?: string
   state: string
   country: string
   tagline: string
@@ -164,6 +166,9 @@ export interface Activity {
   travelFromPrevKm: number
   transport: TransportMode
   notes?: string
+  reasons?: string[]
+  weatherSuitability?: 'good' | 'caution' | 'poor'
+  durationMin?: number
 }
 
 export interface ItineraryDay {
@@ -206,6 +211,28 @@ export interface Trip {
   createdAt: string
   estimatedSpend: number
   placeCount: number
+  shortageNote?: string
+  budgetEstimate?: BudgetEstimate
+}
+
+export interface BudgetEstimate {
+  low: number
+  high: number
+  mid?: number
+  remaining?: number
+  overBy?: number
+  confidence: number
+  nights: number
+  hotelLow: number
+  hotelHigh: number
+  foodLow: number
+  foodHigh: number
+  ticketsLow: number
+  ticketsHigh: number
+  transitLow: number
+  transitHigh: number
+  miscLow?: number
+  miscHigh?: number
 }
 
 export interface Travelers {
@@ -248,6 +275,8 @@ export interface WeatherSnapshot {
   unavailable?: boolean
   weatherCode?: number
   hourly?: { time: string; tempC: number; rainProbability: number }[]
+  daily?: { date: string; tempMax: number; tempMin: number; rainProbability: number; weatherCode: number }[]
+  source?: string
 }
 
 export interface ConditionFeed {
@@ -269,15 +298,20 @@ export interface LiveConditions {
 
 export interface AdaptationSuggestion {
   id: string
-  type: 'weather' | 'traffic' | 'crowd' | 'closure' | 'late' | 'optimize'
+  type: 'weather' | 'traffic' | 'crowd' | 'closure' | 'late' | 'optimize' | 'heat'
   title: string
   message: string
   reason: string
+  explanation?: string
+  changed?: boolean
+  trigger?: { type: string; severity: 'low' | 'medium' | 'high'; value: number }
   original: { time: string; title: string; placeId?: string }
   recommended: { time: string; title: string; placeId?: string }[]
   timeSavedMin?: number
   replacementPlaceId?: string
   affectedActivityId?: string
+  routeChanges?: { kmDelta: number; minutesDelta: number; unavailable?: boolean }
+  budgetChanges?: { estimatedSavings: number }
 }
 
 export interface Expense {
@@ -355,7 +389,7 @@ export interface RoutePath {
   minutes: number
   geometry: [number, number][]
   steps: { instruction: string; km: number }[]
-  source: 'osrm' | 'haversine'
+  source: 'osrm' | 'haversine' | 'unavailable'
   mode: string
 }
 
@@ -370,5 +404,19 @@ export interface RecommendationScore {
     time: number
     budget: number
     itinerary: number
+    activity?: number
   }
+}
+
+export interface SavedTrip {
+  id: string
+  title: string
+  destination: Destination | { name: string; displayName?: string; lat: number; lng: number; city?: string; country?: string }
+  dates: { start: string; end: string }
+  budget: number
+  preferences: { styles: TravelStyle[]; pace: Pace }
+  itinerary: Trip
+  weatherSnapshot?: WeatherSnapshot
+  createdAt: string
+  updatedAt: string
 }

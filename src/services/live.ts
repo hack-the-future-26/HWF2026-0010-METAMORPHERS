@@ -1,17 +1,18 @@
-import { DESTINATIONS, getDestination, registerDestination } from '@/data/destinations'
+import { DESTINATIONS, isStreetLevelName, registerDestination } from '@/data/destinations'
 import { PLACES, registerPlaces } from '@/data/places'
 import type { Destination, LatLng, Place, PlaceCategory, NearbyKind, TravelStyle, RoutePath, WeatherSnapshot } from '@/types'
 import { haversineKm, travelMinutes } from '@/lib/utils'
 import { satellitePhoto } from '@/lib/media'
 import { cacheGet, cacheSet } from '@/lib/cache'
 import { OSM_UNAVAILABLE, WEATHER_UNAVAILABLE } from '@/lib/osmCopy'
-import { API } from './config'
+import { API, apiPath } from './config'
 
-async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
+async function getJson<T>(url: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const ctrl = new AbortController()
-  const timer = globalThis.setTimeout(() => ctrl.abort(), 8000)
+  const { timeoutMs = 12000, ...rest } = init ?? {}
+  const timer = globalThis.setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const res = await fetch(url, { ...init, signal: init?.signal ?? ctrl.signal })
+    const res = await fetch(url, { ...rest, signal: rest.signal ?? ctrl.signal })
     if (!res.ok) throw new Error(`Request failed ${res.status}`)
     return (await res.json()) as T
   } finally {
@@ -37,7 +38,7 @@ async function overpassElements(query: string): Promise<{ elements: OsmEl[]; ok:
   for (const url of OVERPASS_MIRRORS) {
     try {
       const ctrl = new AbortController()
-      const timer = globalThis.setTimeout(() => ctrl.abort(), 8000)
+      const timer = globalThis.setTimeout(() => ctrl.abort(), 14000)
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
@@ -82,6 +83,8 @@ function toDestination(input: {
   return {
     id: `geo_${input.lat.toFixed(5)}_${input.lng.toFixed(5)}_${input.index}`,
     name: input.name,
+    displayName: input.displayName,
+    city: input.city,
     state: input.state,
     country,
     tagline: input.displayName,
@@ -92,38 +95,73 @@ function toDestination(input: {
   }
 }
 
-function inIndia(lat: number, lng: number) {
-  return lat >= 6.4 && lat <= 37.2 && lng >= 68 && lng <= 97.5
+function mapGeocodeHit(r: Destination, i: number): Destination {
+  return toDestination({
+    lat: r.lat,
+    lng: r.lng,
+    name: r.name,
+    city: r.city || r.name,
+    state: r.state || '',
+    country: r.country || '',
+    displayName: r.displayName || r.tagline || r.name,
+    index: i,
+  })
 }
+
+const CITY_LAYERS = 'layer=city&layer=district&layer=locality&layer=county'
 
 async function photonGeocode(q: string): Promise<Destination[]> {
   try {
-    const data = await getJson<{
-      features?: {
-        geometry?: { coordinates?: [number, number] }
-        properties?: {
-          name?: string
-          city?: string
-          state?: string
-          country?: string
-          osm_value?: string
-        }
-      }[]
-    }>(`${PHOTON}?q=${encodeURIComponent(q)}&limit=8&bbox=68.1,6.5,97.4,37.1`)
-    const out: Destination[] = []
-    for (const [i, f] of (data.features ?? []).entries()) {
-      const [lng, lat] = f.geometry?.coordinates ?? []
-      const name = f.properties?.name?.trim()
-      if (lat == null || lng == null || !name) continue
-      if (!inIndia(lat, lng)) continue
-      const city = f.properties?.city || name
-      const state = f.properties?.state || ''
-      const country = f.properties?.country || 'India'
-      if (country && !/india/i.test(country)) continue
-      const display = [name, city, state, country].filter(Boolean).join(', ')
-      out.push(toDestination({ lat, lng, name, city, state, country, displayName: display, index: i }))
+    const res = await fetch(apiPath(`/api/geocode?q=${encodeURIComponent(q)}`))
+    if (res.ok) {
+      const proxied = (await res.json()) as { results?: Destination[] }
+      const ranked = (proxied.results ?? []).filter((r) => r?.name && !isStreetLevelName(r.name))
+      if (ranked.length) return ranked.map(mapGeocodeHit)
     }
-    return out
+  } catch {
+    /* public Photon with the same city ranking */
+  }
+  try {
+    const urls = [
+      `${PHOTON}?q=${encodeURIComponent(q)}&limit=10&${CITY_LAYERS}&lat=22.5&lon=79&bbox=${encodeURIComponent('68.1,6.5,97.4,35.7')}`,
+      `${PHOTON}?q=${encodeURIComponent(q)}&limit=10&${CITY_LAYERS}&lat=22.5&lon=79`,
+      `${PHOTON}?q=${encodeURIComponent(`${q} India`)}&limit=10&${CITY_LAYERS}&lat=22.5&lon=79`,
+    ]
+    const out: Destination[] = []
+    for (const url of urls) {
+      const data = await getJson<{
+        features?: {
+          geometry?: { coordinates?: [number, number] }
+          properties?: {
+            name?: string
+            city?: string
+            state?: string
+            country?: string
+            osm_value?: string
+            type?: string
+          }
+        }[]
+      }>(url)
+      for (const [i, f] of (data.features ?? []).entries()) {
+        const [lng, lat] = f.geometry?.coordinates ?? []
+        const name = f.properties?.name?.trim()
+        const layer = String(f.properties?.type || f.properties?.osm_value || '').toLowerCase()
+        if (lat == null || lng == null || !name) continue
+        if (isStreetLevelName(name) || ['house', 'street', 'highway'].includes(layer)) continue
+        const city = f.properties?.city || name
+        const state = f.properties?.state || ''
+        const country = f.properties?.country || ''
+        const display = [name, city !== name ? city : '', state, country].filter(Boolean).join(', ')
+        out.push(toDestination({ lat, lng, name, city, state, country, displayName: display, index: i }))
+      }
+      if (out.length) break
+    }
+    out.sort((a, b) => {
+      const india = (d: Destination) => (/india/i.test(d.country) ? 1 : 0)
+      const exact = (d: Destination) => (d.name.toLowerCase() === q.trim().toLowerCase() ? 1 : 0)
+      return india(b) - india(a) || exact(b) - exact(a)
+    })
+    return out.slice(0, 8)
   } catch {
     return []
   }
@@ -171,12 +209,27 @@ const UNAVAILABLE_WEATHER: WeatherSnapshot = {
 
 export const weatherService = {
   async getCurrent(coords: LatLng): Promise<WeatherSnapshot> {
+    return this.getCurrentWeather(coords)
+  },
+  async getCurrentWeather(coords: LatLng): Promise<WeatherSnapshot> {
     const key = `wx:${coords.lat.toFixed(3)},${coords.lng.toFixed(3)}`
     const cached = cacheGet<WeatherSnapshot>(key, 12 * 60 * 1000)
     if (cached) return { ...cached, stale: false }
     const stale = cacheGet<WeatherSnapshot>(key, 24 * 60 * 60 * 1000)
     try {
-      const url = `${API.weatherUrl}?latitude=${coords.lat}&longitude=${coords.lng}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability&daily=sunset&forecast_hours=12&timezone=auto`
+      try {
+        const proxied = await getJson<{ weather: WeatherSnapshot }>(
+          apiPath(`/api/weather?lat=${coords.lat}&lon=${coords.lng}`),
+        )
+        if (proxied.weather && !proxied.weather.unavailable) {
+          const snap = { ...proxied.weather, source: 'Open-Meteo', stale: false, unavailable: false }
+          cacheSet(key, snap)
+          return snap
+        }
+      } catch {
+        /* fall through to Open-Meteo */
+      }
+      const url = `${API.weatherUrl}?latitude=${coords.lat}&longitude=${coords.lng}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,sunset&forecast_hours=12&timezone=auto`
       const data = await getJson<{
         current: {
           temperature_2m: number
@@ -188,7 +241,14 @@ export const weatherService = {
           wind_speed_10m: number
         }
         hourly?: { time: string[]; temperature_2m: number[]; precipitation_probability: number[] }
-        daily: { sunset: string[] }
+        daily: {
+          sunset: string[]
+          time?: string[]
+          temperature_2m_max?: number[]
+          temperature_2m_min?: number[]
+          precipitation_probability_max?: number[]
+          weather_code?: number[]
+        }
       }>(url)
       const condition = codeToCondition(data.current.weather_code)
       const sunsetRaw = data.daily.sunset?.[0]
@@ -200,6 +260,13 @@ export const weatherService = {
             rainProbability: data.hourly!.precipitation_probability[i] ?? 0,
           }))
         : []
+      const daily = (data.daily.time ?? []).slice(0, 7).map((date, i) => ({
+        date,
+        tempMax: Math.round(data.daily.temperature_2m_max?.[i] ?? 0),
+        tempMin: Math.round(data.daily.temperature_2m_min?.[i] ?? 0),
+        rainProbability: data.daily.precipitation_probability_max?.[i] ?? 0,
+        weatherCode: data.daily.weather_code?.[i] ?? 0,
+      }))
       const tempC = Math.round(data.current.temperature_2m)
       const snap: WeatherSnapshot = {
         tempC,
@@ -216,6 +283,8 @@ export const weatherService = {
         unavailable: false,
         weatherCode: data.current.weather_code,
         hourly,
+        daily,
+        source: 'Open-Meteo',
       }
       cacheSet(key, snap)
       return snap
@@ -224,14 +293,38 @@ export const weatherService = {
       return { ...UNAVAILABLE_WEATHER }
     }
   },
+  async getHourlyForecast(coords: LatLng) {
+    const snap = await this.getCurrentWeather(coords)
+    return snap.hourly ?? []
+  },
+  async getDailyForecast(coords: LatLng) {
+    const snap = await this.getCurrentWeather(coords)
+    return snap.daily ?? []
+  },
+}
+
+const CARTO_LIGHT = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
+const CARTO_DARK = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+
+function safeClientTile() {
+  const url = API.mapsTileUrl
+  if (!url) return CARTO_LIGHT
+  if (/maptiler\.com/i.test(url) && !/[?&]key=/.test(url)) return CARTO_LIGHT
+  if (/mapbox\.com/i.test(url) && !/access_token=/.test(url)) return CARTO_LIGHT
+  return url
 }
 
 export const mapsService = {
-  lightTiles: API.mapsTileUrl || 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-  darkTiles: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  lightTiles: safeClientTile(),
+  darkTiles: CARTO_DARK,
   attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+  applyStyle(style: { light: string; dark: string; attribution: string }) {
+    this.lightTiles = style.light
+    this.darkTiles = style.dark
+    this.attribution = style.attribution
+  },
   tileUrl() {
-    return API.mapsTileUrl || this.lightTiles
+    return this.lightTiles
   },
 }
 
@@ -276,7 +369,7 @@ export const geocodingService = {
   async search(query: string): Promise<Destination[]> {
     const q = query.trim()
     if (!q) return []
-    const key = `geo:v2:${q.toLowerCase()}`
+    const key = `geo:v4:${q.toLowerCase()}`
     const cached = cacheGet<Destination[]>(key, 60 * 60 * 1000)
     if (cached?.length) return cached
 
@@ -302,10 +395,10 @@ export const geocodingService = {
             country?: string
           }
         }[]
-      >(`/search?q=${encodeURIComponent(q)}&format=json&limit=6&addressdetails=1&countrycodes=in`)
+      >(`/search?q=${encodeURIComponent(q)}&format=json&limit=6&addressdetails=1&countrycodes=in&featuretype=settlement`)
       if (data?.length) {
         const results = data
-          .filter((r) => inIndia(Number(r.lat), Number(r.lon)))
+          .filter((r) => !isStreetLevelName(r.name || r.display_name.split(',')[0]))
           .map((r, i) =>
           toDestination({
             lat: Number(r.lat),
@@ -344,7 +437,7 @@ function osmCoords(el: OsmEl): LatLng | null {
   return null
 }
 
-function classify(tags: Record<string, string>): { category: PlaceCategory; nearbyKind?: NearbyKind; styles: TravelStyle[]; indoor: boolean; weatherSensitive: boolean } {
+function classify(tags: Record<string, string>): { category: PlaceCategory; nearbyKind?: NearbyKind; styles: TravelStyle[]; indoor: boolean; weatherSensitive: boolean } | null {
   const amenity = tags.amenity
   const tourism = tags.tourism
   const leisure = tags.leisure
@@ -354,9 +447,9 @@ function classify(tags: Record<string, string>): { category: PlaceCategory; near
   if (amenity === 'pharmacy') return { category: 'emergency', nearbyKind: 'pharmacy', styles: [], indoor: true, weatherSensitive: false }
   if (amenity === 'atm' || amenity === 'bank') return { category: 'emergency', nearbyKind: 'atm', styles: [], indoor: true, weatherSensitive: false }
   if (amenity === 'toilets') return { category: 'emergency', nearbyKind: 'restroom', styles: [], indoor: true, weatherSensitive: false }
-  if (amenity === 'fuel') return { category: 'transport', nearbyKind: 'fuel', styles: [], indoor: false, weatherSensitive: false }
+  if (amenity === 'fuel') return { category: 'emergency', nearbyKind: 'fuel', styles: [], indoor: false, weatherSensitive: false }
   if (amenity === 'bus_station' || tags.aeroway === 'aerodrome' || tags.railway === 'station' || tags.public_transport === 'station') {
-    return { category: 'transport', styles: [], indoor: true, weatherSensitive: false }
+    return null
   }
   if (amenity === 'cafe') return { category: 'cafe', nearbyKind: 'cafe', styles: ['food', 'relaxation'], indoor: true, weatherSensitive: false }
   if (amenity === 'restaurant' || amenity === 'fast_food' || amenity === 'food_court') {
@@ -371,6 +464,9 @@ function classify(tags: Record<string, string>): { category: PlaceCategory; near
   }
   if (leisure === 'park' || leisure === 'garden' || leisure === 'nature_reserve') {
     return { category: 'attraction', styles: ['nature', 'relaxation'], indoor: false, weatherSensitive: true }
+  }
+  if (amenity === 'cinema' || amenity === 'theatre' || leisure === 'bowling_alley') {
+    return { category: 'attraction', styles: ['culture', 'relaxation'], indoor: true, weatherSensitive: false }
   }
   if (tourism === 'museum' || tourism === 'gallery') {
     return { category: 'attraction', styles: ['history', 'culture'], indoor: true, weatherSensitive: false }
@@ -413,6 +509,7 @@ function toPlace(el: OsmEl, origin: LatLng, destId: string): Place | null {
   const name = tags.name || tags['name:en']
   if (!coords || !name) return null
   const meta = classify(tags)
+  if (!meta) return null
   const hours = parseHours(tags.opening_hours)
   const id = `osm_${el.type}_${el.id}`
   const addr = [tags['addr:housename'], tags['addr:street'], tags['addr:city']].filter(Boolean).join(', ')
@@ -439,7 +536,7 @@ function toPlace(el: OsmEl, origin: LatLng, destId: string): Place | null {
     opensAt: hours.opensAt,
     closesAt: hours.closesAt,
     entryFee: 0,
-    bestTime: hours.hoursKnown ? hours.openingHours : OSM_UNAVAILABLE,
+    bestTime: hours.hoursKnown ? hours.openingHours : '',
     crowd: 'moderate',
     crowdNote: '',
     durationMin: meta.category === 'attraction' ? 75 : 40,
@@ -460,6 +557,62 @@ function toPlace(el: OsmEl, origin: LatLng, destId: string): Place | null {
   }
 }
 
+function coerceBackendPlace(raw: Partial<Place> & { lat?: number; lng?: number; name?: string }, destId: string): Place | null {
+  if (!raw?.name || raw.lat == null || raw.lng == null) return null
+  const lat = raw.lat
+  const lng = raw.lng
+  const image = raw.image || satellitePhoto(lat, lng)
+  return {
+    id: raw.id || `osm_${raw.name.toLowerCase().replace(/\s+/g, '_')}`,
+    destinationId: destId,
+    name: raw.name,
+    category: raw.category || 'attraction',
+    nearbyKind: raw.nearbyKind,
+    styles: raw.styles?.length ? raw.styles : ['culture'],
+    description: raw.description || `${raw.name} (OpenStreetMap)`,
+    rating: raw.rating ?? 0,
+    reviewCount: raw.reviewCount ?? 0,
+    image,
+    images: raw.images?.length ? raw.images : image ? [image] : [],
+    lat,
+    lng,
+    address: raw.address || OSM_UNAVAILABLE,
+    openingHours: raw.openingHours || OSM_UNAVAILABLE,
+    opensAt: raw.opensAt ?? 0,
+    closesAt: raw.closesAt ?? 24,
+    entryFee: raw.entryFee ?? 0,
+    bestTime: raw.bestTime || '',
+    crowd: raw.crowd || 'moderate',
+    crowdNote: raw.crowdNote || '',
+    durationMin: raw.durationMin ?? (raw.category === 'restaurant' || raw.category === 'cafe' ? 40 : 75),
+    estimatedCost: raw.estimatedCost ?? 0,
+    indoor: Boolean(raw.indoor),
+    weatherSensitive: raw.weatherSensitive !== false && raw.category !== 'restaurant' && raw.category !== 'cafe' && raw.category !== 'hotel',
+    tags: raw.tags ?? [],
+    source: 'osm',
+    website: raw.website,
+    phone: raw.phone,
+    ratingKnown: Boolean(raw.ratingKnown),
+    hoursKnown: Boolean(raw.hoursKnown),
+    priceKnown: Boolean(raw.priceKnown),
+    crowdKnown: false,
+    imageKnown: Boolean(image),
+  }
+}
+
+function dedupePlaces(list: Place[]): Place[] {
+  const seen = new Set<string>()
+  const out: Place[] = []
+  for (const p of list) {
+    const key = p.name.trim().toLowerCase()
+    if (seen.has(p.id) || seen.has(key)) continue
+    seen.add(p.id)
+    seen.add(key)
+    out.push(p)
+  }
+  return out
+}
+
 type PhotonFeature = {
   geometry: { coordinates: [number, number] }
   properties: {
@@ -473,53 +626,38 @@ type PhotonFeature = {
   }
 }
 
-const PHOTON_QUERIES = [
-  'attraction',
-  'museum',
-  'gallery',
-  'viewpoint',
-  'temple',
-  'park',
-  'monument',
-  'artwork',
-  'theme park',
-  'restaurant',
-  'cafe',
-  'fast food',
-  'hospital',
-  'pharmacy',
-  'atm',
-  'fuel',
-  'hotel',
-] as const
+const PHOTON_QUERIES = ['museum', 'attraction', 'monument', 'park', 'restaurant', 'cafe'] as const
 
 async function photonNearby(coords: LatLng, radiusM: number, destId: string): Promise<Place[]> {
-  const dest = getDestination(destId)
-  const city = dest.name && dest.name !== destId ? dest.name : ''
-  const degLat = Math.max(0.08, radiusM / 111_000)
-  const degLng = Math.max(0.08, radiusM / (111_000 * Math.max(0.2, Math.cos((coords.lat * Math.PI) / 180))))
+  const degLat = Math.max(0.05, Math.min(0.12, radiusM / 111_000))
+  const degLng = Math.max(0.05, Math.min(0.12, radiusM / (111_000 * Math.max(0.2, Math.cos((coords.lat * Math.PI) / 180)))))
   const bbox = `${coords.lng - degLng},${coords.lat - degLat},${coords.lng + degLng},${coords.lat + degLat}`
-  const batches = await Promise.all(
-    PHOTON_QUERIES.map(async (q) => {
-      try {
-        const query = city ? `${q} ${city}` : q
-        const data = await getJson<{ features?: PhotonFeature[] }>(
-          `${PHOTON}?q=${encodeURIComponent(query)}&lat=${coords.lat}&lon=${coords.lng}&bbox=${encodeURIComponent(bbox)}&limit=10`,
-        )
-        return data.features ?? []
-      } catch {
-        return [] as PhotonFeature[]
-      }
-    }),
-  )
+  const features: PhotonFeature[] = []
+  for (let i = 0; i < PHOTON_QUERIES.length; i += 2) {
+    const batch = PHOTON_QUERIES.slice(i, i + 2)
+    const parts = await Promise.all(
+      batch.map(async (q) => {
+        try {
+          const data = await getJson<{ features?: PhotonFeature[] }>(
+            `${PHOTON}?q=${encodeURIComponent(q)}&lat=${coords.lat}&lon=${coords.lng}&bbox=${encodeURIComponent(bbox)}&limit=12`,
+            { timeoutMs: 7000 },
+          )
+          return data.features ?? []
+        } catch {
+          return [] as PhotonFeature[]
+        }
+      }),
+    )
+    features.push(...parts.flat())
+  }
   const seen = new Set<string>()
   const places: Place[] = []
-  for (const f of batches.flat()) {
+  for (const f of features) {
     const name = f.properties.name?.trim()
     const [lng, lat] = f.geometry?.coordinates ?? []
     if (!name || lat == null || lng == null) continue
     if (/^(park|atm|cafe|restaurant|hospital|hotel|pharmacy|fuel|supermarket|museum|beach|toilets)$/i.test(name)) continue
-    if (haversineKm(coords, { lat, lng }) > radiusM / 1000 + 0.05) continue
+    if (haversineKm(coords, { lat, lng }) > radiusM / 1000 + 1.2) continue
     const osmType = f.properties.osm_type === 'W' ? 'way' : f.properties.osm_type === 'R' ? 'relation' : 'node'
     const key = f.properties.osm_key || 'amenity'
     const value = f.properties.osm_value || ''
@@ -578,7 +716,7 @@ export const placesService = {
       }
       return list
     }
-    const key = `near:v6:${destId}:${coords.lat.toFixed(3)},${coords.lng.toFixed(3)}:${radiusM}`
+    const key = `near:v8:${destId}:${coords.lat.toFixed(3)},${coords.lng.toFixed(3)}:${radiusM}`
     const cached = cacheGet<Place[]>(key, 4 * 60 * 1000)
     if (cached?.some((p) => p.source === 'osm')) {
       const list = mergeCatalog([...cached])
@@ -586,34 +724,59 @@ export const placesService = {
       registerPlaces(list)
       return list
     }
-    const photon = await photonNearby(coords, radiusM, destId)
-    let overpassPlaces: Place[] = []
-    const around = `(around:${radiusM},${coords.lat},${coords.lng})`
-    const q = `
-[out:json][timeout:20];
-(
-  nwr["tourism"~"attraction|museum|gallery|viewpoint|theme_park|artwork"]${around};
-  nwr["historic"]${around};
-  nwr["leisure"~"park|garden"]${around};
-  nwr["amenity"="place_of_worship"]${around};
-  nwr["natural"]${around};
-  nwr["amenity"~"restaurant|cafe|fast_food|food_court"]${around};
-  nwr["tourism"~"hotel|guest_house|hostel"]${around};
-  nwr["amenity"="bus_station"]${around};
-  nwr["aeroway"="aerodrome"]${around};
-  nwr["railway"="station"]${around};
-);
-out center 80;
-`
-    const { elements } = await overpassElements(q)
-    const seen = new Set(photon.map((p) => p.name.toLowerCase()))
-    for (const el of elements) {
-      const p = toPlace(el, coords, destId)
-      if (!p || seen.has(p.name.toLowerCase())) continue
-      seen.add(p.name.toLowerCase())
-      overpassPlaces.push(p)
+
+    const fromApi: Place[] = []
+    try {
+      const proxied = await getJson<{ places?: Array<Partial<Place> & { lat?: number; lng?: number; name?: string }> }>(
+        apiPath(`/api/places?lat=${coords.lat}&lon=${coords.lng}&radius=${Math.min(12000, radiusM)}&destId=${encodeURIComponent(destId)}`),
+        { timeoutMs: 18000 },
+      )
+      for (const raw of proxied.places ?? []) {
+        const p = coerceBackendPlace(raw, destId)
+        if (p) fromApi.push(p)
+      }
+    } catch {
+      /* Photon / Overpass below */
     }
-    const osm = [...photon, ...overpassPlaces]
+
+    const foodCount = (list: Place[]) => list.filter((p) => p.category === 'restaurant' || p.category === 'cafe').length
+    const photon = foodCount(fromApi) >= 6 && fromApi.length >= 12 ? [] : await photonNearby(coords, radiusM, destId)
+    let overpassPlaces: Place[] = []
+    const mergedSoFar = [...fromApi, ...photon]
+    const needFood = foodCount(mergedSoFar) < 6
+    if (mergedSoFar.length < 10 || needFood) {
+      const around = `(around:${Math.min(8000, radiusM)},${coords.lat},${coords.lng})`
+      const q =
+        needFood && mergedSoFar.length >= 10
+          ? `
+[out:json][timeout:12];
+(
+  node["amenity"="restaurant"]${around};
+  node["amenity"="cafe"]${around};
+);
+out 40;
+`
+          : `
+[out:json][timeout:12];
+(
+  node["tourism"="museum"]${around};
+  node["tourism"="attraction"]${around};
+  node["tourism"="gallery"]${around};
+  node["amenity"="restaurant"]${around};
+  node["amenity"="cafe"]${around};
+);
+out 50;
+`
+      const { elements } = await overpassElements(q)
+      const seen = new Set(mergedSoFar.map((p) => p.name.toLowerCase()))
+      for (const el of elements) {
+        const p = toPlace(el, coords, destId)
+        if (!p || seen.has(p.name.toLowerCase())) continue
+        seen.add(p.name.toLowerCase())
+        overpassPlaces.push(p)
+      }
+    }
+    const osm = [...fromApi, ...photon, ...overpassPlaces]
     if (!osm.length) {
       const fallback = allowCatalog
         ? PLACES.filter((p) => haversineKm(coords, p) <= radiusM / 1000 + 0.2).slice(0, 40)
@@ -625,7 +788,7 @@ out center 80;
     const named = osm.filter(
       (p) => !/^(park|atm|cafe|restaurant|hospital|hotel|pharmacy|fuel|supermarket|museum|beach|toilets)$/i.test(p.name),
     )
-    const trimmed = mergeCatalog((named.length ? named : osm).slice(0, 80))
+    const trimmed = mergeCatalog(dedupePlaces(named.length ? named : osm).slice(0, 80))
     trimmed.sort((a, b) => haversineKm(coords, a) - haversineKm(coords, b))
     registerPlaces(trimmed)
     cacheSet(key, trimmed.filter((p) => p.source === 'osm'))
@@ -646,6 +809,19 @@ export const routingService = {
     if (cached) return cached
     const profile = osrmProfile(mode)
     try {
+      try {
+        const proxied = await getJson<{ route?: RoutePath }>(apiPath('/api/route'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ points: [a, b], mode }),
+        })
+        if (proxied.route?.source === 'osrm' && proxied.route.geometry.length) {
+          cacheSet(key, proxied.route)
+          return proxied.route
+        }
+      } catch {
+        /* public OSRM fallback */
+      }
       const url = `${OSRM}/route/v1/${profile}/${a.lng},${a.lat};${b.lng},${b.lat}?overview=full&geometries=geojson&steps=true`
       const data = await getJson<{
         code: string
@@ -677,16 +853,12 @@ export const routingService = {
       cacheSet(key, result)
       return result
     } catch {
-      const km = Number((haversineKm(a, b) * 1.25).toFixed(2))
       return {
-        km,
-        minutes: travelMinutes(km, mode),
-        geometry: [
-          [a.lat, a.lng],
-          [b.lat, b.lng],
-        ],
+        km: Number(haversineKm(a, b).toFixed(2)),
+        minutes: travelMinutes(haversineKm(a, b), mode),
+        geometry: [],
         steps: [],
-        source: 'haversine',
+        source: 'unavailable',
         mode,
       }
     }

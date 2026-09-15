@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
+import { foodCityId, foodsAsPlaces } from '@/data/cityEssentials'
 import { placesForDestination } from '@/data/places'
-import { getDestination } from '@/data/destinations'
+import { destDisplayLabel, getDestination } from '@/data/destinations'
 import { PlacesBrowser } from '@/components/places/PlacesBrowser'
 import { useAppStore } from '@/store/useAppStore'
 import type { Place } from '@/types'
@@ -11,18 +12,25 @@ const foody = (p: Place) =>
   p.nearbyKind === 'cafe' ||
   p.nearbyKind === 'restaurant' ||
   p.tags.includes('fast_food') ||
-  p.tags.includes('streetfood')
+  p.tags.includes('streetfood') ||
+  p.tags.includes('famous') ||
+  p.styles.includes('food')
 
 export function FoodPage() {
   const nearby = useAppStore((s) => s.nearbyPlaces)
-  const destId = useAppStore((s) => s.trip?.destinationId ?? s.planner.destinationId) ?? 'vizag'
-  const dest = getDestination(destId)
+  const destId = useAppStore((s) => s.trip?.destinationId ?? s.planner.destinationId)
+  const destLabel = destId ? destDisplayLabel(getDestination(destId)) : 'your destination'
   const loading = useAppStore((s) => s.nearbyLoading)
   const error = useAppStore((s) => s.nearbyError)
   const refresh = useAppStore((s) => s.refreshNearby)
-  const catalog = destId === 'vizag' ? placesForDestination('vizag').filter(foody) : []
+  const foodKey = destId ? foodCityId(destId) : ''
+  const catalog = [
+    ...(destId ? foodsAsPlaces(destId) : []),
+    ...(foodKey === 'vizag' ? placesForDestination('vizag').filter(foody) : []),
+  ]
   const seen = new Set<string>()
-  const places = [...nearby.filter(foody), ...catalog].filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)))
+  const places = [...catalog, ...nearby.filter(foody)].filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)))
+  const hasFamous = places.some((p) => p.tags.includes('famous'))
 
   useEffect(() => {
     void refresh(true)
@@ -30,13 +38,14 @@ export function FoodPage() {
 
   return (
     <PlacesBrowser
-      title="Find Food"
-      subtitle={`Restaurants, cafes and food places from OpenStreetMap around ${dest.name}.`}
+      key={destId || 'food'}
+      title="Famous food"
+      subtitle={`Signature dishes in ${destLabel} when we have them, then live-map restaurants and cafes.`}
       filters={[
+        ...(hasFamous ? [{ id: 'famous', label: '★ Famous', match: (p: Place) => p.tags.includes('famous') }] : []),
         { id: 'all', label: '🍴 All', match: foody },
-        { id: 'cafe', label: '☕ Cafe', match: (p) => p.category === 'cafe' || p.nearbyKind === 'cafe' },
-        { id: 'restaurant', label: '🍛 Restaurant', match: (p) => p.category === 'restaurant' && !p.tags.includes('fast_food') },
-        { id: 'fast', label: '🥤 Fast Food', match: (p) => p.tags.includes('fast_food') },
+        { id: 'cafe', label: '☕ Cafe', match: (p: Place) => p.category === 'cafe' || p.nearbyKind === 'cafe' },
+        { id: 'restaurant', label: '🍛 Restaurant', match: (p: Place) => p.category === 'restaurant' && !p.tags.includes('fast_food') },
       ]}
       places={places}
       loading={loading}

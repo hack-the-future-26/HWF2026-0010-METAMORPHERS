@@ -6,13 +6,12 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 
 const CHIPS = [
-  'I just landed. What do I do first?',
-  'I am lost.',
-  'I am hungry.',
-  'How do I get a SIM?',
-  'Airport to hotel safely?',
-  'Is it going to rain?',
-  'Where should a first-timer stay?',
+  'Why did you change my itinerary?',
+  'I only have ₹500 left. What can I do?',
+  'What should I do if it rains tomorrow?',
+  'Which activity can I skip?',
+  'Why did you choose this place?',
+  'Optimize my itinerary for a ₹5,000 budget.',
 ]
 
 export function AIAssistant() {
@@ -53,7 +52,7 @@ export function AIAssistant() {
               <p className="flex items-center gap-2 font-display text-lg">
                 <Sparkles className="size-4" /> YatraSense AI
               </p>
-              <p className="text-xs text-white/70">Ask anything about your trip or city</p>
+              <p className="text-xs text-white/70">Answers from your trip JSON — not a generic chatbot</p>
             </div>
             <Button size="icon" variant="ghost" className="text-white hover:bg-white/10" onClick={() => setOpen(false)}>
               <X className="size-5" />

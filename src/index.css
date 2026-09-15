@@ -121,6 +121,37 @@ h2,
   animation: pulse-live 1.8s ease-out infinite;
 }
 
+@keyframes hero-ken {
+  from {
+    transform: scale(1.04);
+  }
+  to {
+    transform: scale(1.14);
+  }
+}
+
+.hero-slide {
+  opacity: 0;
+  transition: opacity 0.85s ease-in-out;
+}
+
+.hero-slide-active {
+  opacity: 1;
+}
+
+.hero-slide-active.hero-ken {
+  animation: hero-ken 4.2s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-slide {
+    transition: none;
+  }
+  .hero-slide-active.hero-ken {
+    animation: none;
+  }
+}
+
 .app-canvas {
   background-image:
     radial-gradient(1200px 520px at -8% -12%, rgb(13 92 99 / 0.12), transparent 55%),

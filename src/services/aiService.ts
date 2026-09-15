@@ -1,4 +1,7 @@
+import { CITY_FOODS, formatFoodLine } from '@/data/cityEssentials'
+import { hotelsAsPlaces } from '@/data/cityLandmarks'
 import { getDestination } from '@/data/destinations'
+import { estimateTripBudget } from '@/lib/budgetEstimate'
 import { getPlace, placesForDestination } from '@/data/places'
 import type {
   Activity,
@@ -14,7 +17,7 @@ import type {
   WeatherSnapshot,
 } from '@/types'
 import { formatInr, haversineKm, minutesToTime, timeToMinutes, travelMinutes, uid } from '@/lib/utils'
-import { scorePlace } from '@/lib/recommend'
+import { scorePlace, weatherSuitabilityFor } from '@/lib/recommend'
 import { NO_NEARBY_RESTAURANT, OSM_UNAVAILABLE } from '@/lib/osmCopy'
 import { API } from './config'
 import { routingService } from './routingService'
@@ -91,7 +94,7 @@ function pickPlaces(
   const hot = weather && !weather.unavailable && ((weather.apparentTempC ?? weather.tempC) >= 36)
   const source = extra.length ? extra : demoMode && dest ? placesForDestination(dest) : extra
   const nearbyPool = uniquePlaces(source).filter(
-    (p) => p.id.startsWith(`poi_${dest}_`) || haversineKm(origin, p) < 22,
+    (p) => p.id.startsWith(`poi_${dest}_`) || haversineKm(origin, p) < 36,
   )
   const all = nearbyPool.filter((p) => {
     if (p.category !== 'attraction' && p.category !== 'hidden') return false
@@ -184,14 +187,41 @@ export function buildTrip(
   const ranked = pickPlaces(planner, extraPlaces, origin, weather, demoMode)
   const perDay = activitiesPerDay(planner.pace)
   const mode = transportOf(planner)
+  const scoreConditions: LiveConditions = {
+    ...emptyFeeds(),
+    weather: weather ?? {
+      tempC: 0,
+      condition: 'partly-cloudy',
+      rainProbability: 0,
+      humidity: 0,
+      windKph: 0,
+      sunset: '',
+      summary: '',
+      unavailable: true,
+    },
+    traffic: 'moderate',
+    crowdOverrides: {},
+    closures: [],
+    runningLateMin: 0,
+    lowBattery: false,
+  }
   const localPool = uniquePlaces(extraPlaces.length ? extraPlaces : demoMode ? placesForDestination(dest.id) : extraPlaces).filter(
-    (p) => p.id.startsWith(`poi_${dest.id}_`) || haversineKm(origin, p) < 22,
+    (p) => p.id.startsWith(`poi_${dest.id}_`) || haversineKm(origin, p) < 36,
   )
   const hotel = localPool.find((p) => p.category === 'hotel')
   const used = new Set<string>(hotel?.id ? [hotel.id] : [])
+  const usedNames = new Set<string>(hotel?.name ? [hotel.name.trim().toLowerCase()] : [])
+  const claim = (p?: Place) => {
+    if (!p) return undefined
+    const n = p.name.trim().toLowerCase()
+    if (used.has(p.id) || usedNames.has(n)) return undefined
+    used.add(p.id)
+    usedNames.add(n)
+    return p
+  }
   const daysPlan = Array.from({ length: days }, (_, dayIndex) => {
-    const pool = ranked.filter((p) => !used.has(p.id))
-    const chosen = clusterDay(pool, perDay, hotel)
+    const pool = ranked.filter((p) => !used.has(p.id) && !usedNames.has(p.name.trim().toLowerCase()))
+    const chosen = clusterDay(pool, perDay, hotel).filter((p) => claim(p))
     chosen.forEach((p) => used.add(p.id))
     const style = planner.styles[dayIndex % Math.max(1, planner.styles.length)] ?? 'beaches'
     const titles = DAY_THEMES[style] ?? ['Open Day']
@@ -203,8 +233,7 @@ export function buildTrip(
     let lunchDone = false
 
     const pushMeal = (kind: 'breakfast' | 'lunch' | 'dinner', start: number) => {
-      const place = mealPlace(localPool, kind, used)
-      if (place) used.add(place.id)
+      const place = claim(mealPlace(localPool, kind, used))
       const from = prev ?? hotel
       const km = from && place ? haversineKm(from, place) * 1.2 : 0
       const travel = place && from ? Math.min(28, travelMinutes(km, mode)) : 0
@@ -244,6 +273,7 @@ export function buildTrip(
       cursor = Math.max(cursor + travel, openMin)
       if (place.hoursKnown !== false && cursor + place.durationMin > closeMin) continue
       if (cursor + place.durationMin > 20 * 60 + 15) continue
+      const scored = scorePlace(place, origin, planner.styles, scoreConditions, planner.budget, null)
       activities.push({
         id: uid('act'),
         dayIndex,
@@ -258,6 +288,9 @@ export function buildTrip(
         travelFromPrevKm: Number(km.toFixed(1)),
         transport: mode,
         notes: place.bestTime,
+        reasons: scored.reasons,
+        weatherSuitability: weatherSuitabilityFor(place, weather?.rainProbability ?? 0, weather?.tempC ?? 0),
+        durationMin: place.durationMin,
       })
       cursor += place.durationMin + 12
       prev = place
@@ -280,10 +313,21 @@ export function buildTrip(
   const totalKm = allActs.reduce((s, a) => s + a.travelFromPrevKm, 0)
   const placeCount = allActs.filter((a) => a.kind === 'place').length
   const estimated = allActs.reduce((s, a) => s + a.cost, 0)
-  const match = Math.min(
-    98,
-    78 + planner.styles.length * 3 + (planner.pace === 'balanced' ? 4 : 2),
+  const needed = days * Math.max(2, perDay - 1)
+  const shortageNote =
+    placeCount < needed
+      ? `Only ${placeCount} distinct stops were found for ${days} days in ${dest.name}. Shorten the trip or widen the search — we did not repeat places.`
+      : undefined
+  const budgetEstimate = estimateTripBudget(
+    {
+      days,
+      daysPlan,
+      placeCount,
+      estimatedSpend: estimated,
+    } as Trip,
+    hotel,
   )
+  const match = 0
 
   return {
     id: uid('trip'),
@@ -320,6 +364,8 @@ export function buildTrip(
     },
     createdAt: new Date().toISOString(),
     estimatedSpend: estimated,
+    shortageNote,
+    budgetEstimate,
     placeCount,
   }
 }
@@ -537,6 +583,7 @@ export async function askAssistant(
     live?: boolean
     adapted?: boolean
     adaptationReason?: string
+    adaptationExplanation?: string
     nearbyNames?: string[]
     destinationId?: string | null
   },
@@ -550,17 +597,45 @@ export async function askAssistant(
           prompt,
           destinationId: ctx.destinationId,
           context: {
-            destinationId: ctx.destinationId,
-            tripTitle: ctx.trip?.title,
-            location: ctx.label,
+            destination: {
+              id: ctx.destinationId,
+              name: ctx.destination,
+              label: ctx.label,
+            },
             weather: ctx.conditions.weather,
-            remainingBudget: ctx.remainingBudget,
+            itinerary: ctx.trip
+              ? {
+                  title: ctx.trip.title,
+                  days: ctx.trip.days,
+                  stops: ctx.trip.daysPlan.flatMap((d) =>
+                    d.activities.map((a) => ({ day: d.index + 1, time: a.start, title: a.title, cost: a.cost })),
+                  ),
+                }
+              : null,
+            budget: {
+              total: ctx.trip?.budget,
+              remaining: ctx.remainingBudget,
+              spent: ctx.spent,
+              estimate: ctx.trip?.budgetEstimate,
+            },
+            places: ctx.nearbyNames,
+            adaptation: ctx.adapted
+              ? { reason: ctx.adaptationReason, explanation: ctx.adaptationExplanation }
+              : null,
             next: ctx.nextName,
-            destination: ctx.destination,
-            nearby: ctx.nearbyNames,
+            live: ctx.live,
+            traffic: { status: 'unavailable', source: 'No live traffic provider connected' },
+            crowd: { status: 'unavailable', source: 'No live crowd provider connected' },
           },
         }),
       })
+      if (res.status === 503) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string }
+        return {
+          reply: `${data.error || 'AI is not configured.'} I can still use your trip numbers locally — remaining budget ${formatInr(ctx.remainingBudget)}. ${ctx.adapted ? ctx.adaptationReason : ''}`.trim(),
+        }
+      }
+      if (!res.ok) throw new Error('ai')
       const data = (await res.json()) as { reply?: string; content?: string; choices?: { message?: { content?: string } }[] }
       const content = data.reply || data.content || data.choices?.[0]?.message?.content
       if (content?.trim()) return { reply: content.trim() }
@@ -631,9 +706,10 @@ function composeReply(
       next ? 'go' : 'next',
     )
   }
-  if (q.includes('500') || (q.includes('spend') && q.includes('today')) || q.includes('cheap') || q.includes('food') || q.includes('eat') || q.includes('restaurant') || q.includes('cafe')) {
+  if (q.includes('500') || (q.includes('spend') && q.includes('today')) || q.includes('cheap') || q.includes('food') || q.includes('eat') || q.includes('restaurant') || q.includes('cafe') || q.includes('dish')) {
+    const famous = destMeta ? formatFoodLine(destMeta.id) : ''
     return withContext(
-      `For food around ${here}: ${nearby.filter((n) => /cafe|hotel|restaurant|food|biryani|dhaba/i.test(n)).slice(0, 3).join(', ') || nearby.slice(0, 3).join(', ') || 'open the Food tab for OSM restaurants'}. ${budgetLine} Street meals and local thalis usually keep you well under ₹500 if you skip hotel restaurants.`,
+      `Famous food in ${dest}: ${famous || 'open the Food tab'}. Nearby map places: ${nearby.filter((n) => /cafe|hotel|restaurant|food|biryani|dhaba/i.test(n)).slice(0, 3).join(', ') || nearby.slice(0, 3).join(', ') || 'load Explore'}. ${budgetLine} Street meals stay cheap if you skip hotel restaurants.`,
       'cheap',
     )
   }
@@ -643,9 +719,15 @@ function composeReply(
       'adapt',
     )
   }
-  if (q.includes('hotel') || q.includes('stay') || q.includes('reach') || q.includes('accommodation')) {
+  if (q.includes('hotel') || q.includes('stay') || q.includes('reach') || q.includes('accommodation') || q.includes('contact')) {
+    const named = destMeta
+      ? hotelsAsPlaces(destMeta.id)
+          .slice(0, 3)
+          .map((h) => `${h.name} — ${h.phone || 'see site'} · ${h.website || ''}`)
+          .join('. ')
+      : ''
     return withContext(
-      `For stays in ${dest}, open the Stay tab for OpenStreetMap hotels near ${here}. I can route you there on Live when GPS is on. ${nearbyLine}`,
+      `Named stays in ${dest} (confirm on the official site): ${named || 'open the Stay tab for reservation phones'}. Night-one area is on Arrive. ${nearbyLine}`,
     )
   }
   if (q.includes('crowd') || q.includes('busy') || q.includes('queue')) {
@@ -678,7 +760,7 @@ function composeReply(
   }
   if (q.includes('safe') || q.includes('sos') || q.includes('hospital') || q.includes('emergency') || q.includes('police')) {
     return withContext(
-      `Use the SOS control for nearby hospitals and police from the map. Emergency numbers: India 112. Stay in well-lit areas at night in ${dest} and keep a local SIM or offline map.`,
+      `Use the SOS control for nearby hospitals and police from the map. Check the local emergency number for ${dest}. Stay in well-lit areas at night and keep a working phone or offline map.`,
     )
   }
   if (q.includes('pack') || q.includes('wear') || q.includes('clothes')) {
@@ -693,9 +775,15 @@ function composeReply(
         : `Check the local season for ${dest}. ${weatherLine} Shoulder months usually mean fewer queues at ${sights.split(',')[0] || 'the main sights'}.`,
     )
   }
-  if (q.includes('itinerary') || q.includes('plan') || q.includes('schedule') || q.includes('day')) {
+  if (q.includes('visa') || q.includes('e-visa') || q.includes('passport')) {
     return withContext(
-      `${tripLine} ${next ? `Up next: ${next}.` : 'Generate a trip to get a timed day plan.'} Famous stops in ${dest}: ${sights}. ${weatherLine}`,
+      `Visa and entry rules depend on your passport and the country you are visiting. Use the official government site for ${destMeta?.country || dest} — YatraSense does not assume where you are travelling from. ${weatherLine}`,
+    )
+  }
+  if (q.includes('itinerary') || q.includes('plan') || q.includes('schedule') || q.includes('day')) {
+    const food = destMeta ? CITY_FOODS[destMeta.id]?.[0] : undefined
+    return withContext(
+      `${tripLine} ${next ? `Up next: ${next}.` : 'Open Plan to generate a timed itinerary.'} Famous stops: ${sights}. First meal: ${food ? `${food.dish} at ${food.place}` : 'see the Food tab'}. ${weatherLine}`,
     )
   }
 

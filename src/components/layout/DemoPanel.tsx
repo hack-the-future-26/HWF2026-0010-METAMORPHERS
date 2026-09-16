@@ -1,93 +1,99 @@
-import { CloudRain, Gauge, Radio, WifiOff, BatteryLow, Clock, Users, DoorClosed, MapPin, RotateCcw } from 'lucide-react'
+import { CloudRain, Sun, Cloud, Radio } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppStore } from '@/store/useAppStore'
 import { Button } from '@/components/ui/Button'
 
-const actions = [
-  { id: 'rain', label: '🌧️ Simulate Rain · Test Adaptation', icon: CloudRain, run: 'simulateRain' as const },
-  { id: 'traffic', label: 'Traffic spike', icon: Gauge, run: 'simulateTraffic' as const },
-  { id: 'crowd', label: 'Crowd increase', icon: Users, run: 'simulateCrowd' as const },
-  { id: 'close', label: 'Place closure', icon: DoorClosed, run: 'simulateClosure' as const },
-  { id: 'late', label: 'Running late', icon: Clock, run: 'simulateLate' as const },
-  { id: 'battery', label: 'Low battery', icon: BatteryLow, run: 'simulateBattery' as const },
-  { id: 'offline', label: 'Go offline', icon: WifiOff, run: 'simulateOffline' as const },
-]
-
 export function DemoPanel() {
   const open = useAppStore((s) => s.demoOpen)
   const setOpen = useAppStore((s) => s.setDemoOpen)
+  const mode = useAppStore((s) => s.appMode)
+  const setMode = useAppStore((s) => s.setAppMode)
   const store = useAppStore()
-  const online = useAppStore((s) => s.online)
 
   if (!open) {
     return (
       <button
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setOpen(true)
+          setMode('demo')
+        }}
         className="fixed bottom-24 right-4 z-40 rounded-full bg-ink-900 px-4 py-2 text-xs font-semibold tracking-wide text-white shadow-float dark:bg-sunset-500 lg:bottom-6"
       >
-        JURY DEMO
-        <span className="ml-1 font-normal text-white/50">(test only)</span>
+        DEMO MODE
+        <span className="ml-1 font-normal text-white/50">(simulation)</span>
       </button>
     )
   }
 
   return (
-    <div className="fixed bottom-24 right-4 z-40 w-[min(100%-2rem,280px)] rounded-3xl bg-ink-900 p-4 text-white shadow-float dark:bg-ink-800 lg:bottom-6">
+    <div className="fixed bottom-24 right-4 z-40 w-[min(100%-2rem,300px)] rounded-3xl bg-ink-900 p-4 text-white shadow-float dark:bg-ink-800 lg:bottom-6">
       <div className="mb-3 flex items-center justify-between">
         <p className="flex items-center gap-2 text-xs font-semibold tracking-[0.14em]">
-          <Radio className="size-3.5 text-sunset-400" /> JURY DEMO
+          <Radio className="size-3.5 text-sunset-400" /> {mode === 'demo' ? 'DEMO MODE' : 'LIVE MODE'}
         </p>
         <button onClick={() => setOpen(false)} className="text-xs text-white/60">
           Hide
         </button>
       </div>
-      <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-sunset-400">Demo / Jury Controls</p>
-      <p className="mb-3 text-[11px] leading-relaxed text-white/60">
-        Separate from LIVE MODE. Simulate Rain uses the real adaptation engine. GPS/reset never overwrite live OSM weather as “real” rain.
+      <div className="mb-3 grid grid-cols-2 gap-1.5">
+        <button
+          onClick={() => setMode('real')}
+          className={`rounded-2xl px-3 py-2 text-xs ${mode === 'real' ? 'bg-teal-700' : 'bg-white/8'}`}
+        >
+          LIVE MODE
+          <span className="mt-0.5 block text-[10px] text-white/60">Real data</span>
+        </button>
+        <button
+          onClick={() => setMode('demo')}
+          className={`rounded-2xl px-3 py-2 text-xs ${mode === 'demo' ? 'bg-sunset-500 text-ink-900' : 'bg-white/8'}`}
+        >
+          DEMO MODE
+          <span className="mt-0.5 block text-[10px] opacity-70">Simulation controls</span>
+        </button>
+      </div>
+      <p className="mb-2 text-[11px] leading-relaxed text-white/60">
+        These buttons run the same adaptation engine as live weather — they do not invent traffic or crowd percentages.
       </p>
-      <div className="mb-2 grid gap-1.5">
-        <button
-          onClick={() => {
-            store.simulateGps()
-            toast.message('Simulated GPS at Sagar Nagar, Endada')
-          }}
-          className="flex items-center gap-2 rounded-2xl bg-white/8 px-3 py-2 text-left text-xs hover:bg-white/12"
-        >
-          <MapPin className="size-3.5 text-teal-300" /> 📍 Simulate GPS
-        </button>
-        <button
-          onClick={() => {
-            store.resetTrip()
-            toast.message('Trip reset to Visakhapatnam')
-          }}
-          className="flex items-center gap-2 rounded-2xl bg-white/8 px-3 py-2 text-left text-xs hover:bg-white/12"
-        >
-          <RotateCcw className="size-3.5 text-teal-300" /> 🔄 Reset Trip
-        </button>
-      </div>
       <div className="grid gap-1.5">
-        {actions.map((a) => {
-          const Icon = a.icon
-          return (
-            <button
-              key={a.id}
-              onClick={() => {
-                store[a.run]()
-                if (a.id === 'rain') toast.success('🌧️ Rain detected — itinerary adapted.')
-              }}
-              className="flex items-center gap-2 rounded-2xl bg-white/8 px-3 py-2 text-left text-xs hover:bg-white/12"
-            >
-              <Icon className="size-3.5 text-teal-300" />
-              {a.label}
-            </button>
-          )
-        })}
+        <button
+          onClick={() => {
+            store.simulateNormalWeather()
+            toast.message('Normal weather restored')
+          }}
+          className="flex items-center gap-2 rounded-2xl bg-white/8 px-3 py-2 text-left text-xs hover:bg-white/12"
+        >
+          <Sun className="size-3.5 text-teal-300" /> Simulate: Normal Weather
+        </button>
+        <button
+          onClick={() => {
+            store.simulateRain()
+            toast.success('Heavy rain — adaptation engine running')
+          }}
+          className="flex items-center gap-2 rounded-2xl bg-white/8 px-3 py-2 text-left text-xs hover:bg-white/12"
+        >
+          <CloudRain className="size-3.5 text-teal-300" /> Simulate: Heavy Rain
+        </button>
+        <button
+          onClick={() => {
+            store.simulateHeat()
+            toast.success('Extreme heat — adaptation engine running')
+          }}
+          className="flex items-center gap-2 rounded-2xl bg-white/8 px-3 py-2 text-left text-xs hover:bg-white/12"
+        >
+          <Cloud className="size-3.5 text-teal-300" /> Simulate: Extreme Heat
+        </button>
       </div>
-      {!online && (
-        <Button size="sm" className="mt-3 w-full" onClick={() => store.setOnline(true)}>
-          Restore connection
-        </Button>
-      )}
+      <Button
+        size="sm"
+        className="mt-3 w-full"
+        variant="secondary"
+        onClick={() => {
+          store.resetTrip()
+          toast.message('Trip cleared — pick any destination')
+        }}
+      >
+        Reset trip
+      </Button>
     </div>
   )
 }

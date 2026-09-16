@@ -1,3 +1,4 @@
+import { applyHotelContact, foodsAsPlaces } from '@/data/cityEssentials'
 import { getDestination } from '@/data/destinations'
 import { registerPlaces } from '@/data/places'
 import { haversineKm } from '@/lib/utils'
@@ -304,41 +305,45 @@ const HOTELS: Record<string, Poi[]> = {
 export function landmarksAsPlaces(destinationId: string): Place[] {
   const dest = getDestination(destinationId)
   const list = [...(POIS[destinationId] ?? []), ...(HOTELS[destinationId] ?? [])]
-  const places: Place[] = list.map((p, i) => ({
-    id: `poi_${destinationId}_${i}`,
-    destinationId,
-    name: p.name,
-    category: p.category,
-    styles: p.styles,
-    description: `${p.name} is a signature ${p.category === 'hotel' ? 'stay' : 'stop'} in ${dest.name}.`,
-    rating: 0,
-    reviewCount: 0,
-    image: p.category === 'hotel' ? satellitePhoto(p.lat, p.lng) : dest.image || satellitePhoto(p.lat, p.lng),
-    images: dest.image ? [dest.image] : [],
-    lat: p.lat,
-    lng: p.lng,
-    address: p.address,
-    openingHours: 'Check locally',
-    opensAt: 9,
-    closesAt: 18,
-    entryFee: 0,
-    bestTime: 'Morning',
-    crowd: 'moderate',
-    crowdNote: '',
-    durationMin: p.durationMin ?? (p.category === 'attraction' ? 75 : 45),
-    estimatedCost: 0,
-    indoor: Boolean(p.indoor),
-    weatherSensitive: !p.indoor && p.category === 'attraction',
-    tags: [p.category === 'hotel' ? 'hotel' : 'landmark', destinationId],
-    source: 'catalog',
-    ratingKnown: false,
-    hoursKnown: false,
-    priceKnown: false,
-    crowdKnown: false,
-    imageKnown: true,
-  }))
-  if (places.length) registerPlaces(places)
-  return places
+  const places: Place[] = list.map((p, i) => {
+    const raw: Place = {
+      id: `poi_${destinationId}_${i}`,
+      destinationId,
+      name: p.name,
+      category: p.category,
+      styles: p.styles,
+      description: `${p.name} is a signature ${p.category === 'hotel' ? 'stay' : 'stop'} in ${dest.name}.`,
+      rating: 0,
+      reviewCount: 0,
+      image: p.category === 'hotel' ? satellitePhoto(p.lat, p.lng) : dest.image || satellitePhoto(p.lat, p.lng),
+      images: dest.image ? [dest.image] : [],
+      lat: p.lat,
+      lng: p.lng,
+      address: p.address,
+      openingHours: 'Check locally',
+      opensAt: 9,
+      closesAt: 18,
+      entryFee: 0,
+      bestTime: 'Morning',
+      crowd: 'moderate',
+      crowdNote: '',
+      durationMin: p.durationMin ?? (p.category === 'attraction' ? 75 : 45),
+      estimatedCost: 0,
+      indoor: Boolean(p.indoor),
+      weatherSensitive: !p.indoor && p.category === 'attraction',
+      tags: [p.category === 'hotel' ? 'hotel' : 'landmark', destinationId],
+      source: 'catalog',
+      ratingKnown: false,
+      hoursKnown: false,
+      priceKnown: false,
+      crowdKnown: false,
+      imageKnown: true,
+    }
+    return p.category === 'hotel' ? applyHotelContact(raw) : raw
+  })
+  const withFood = [...places, ...foodsAsPlaces(destinationId)]
+  if (withFood.length) registerPlaces(withFood)
+  return withFood
 }
 
 /** Landmarks always win; OSM extras must actually sit near this city. */

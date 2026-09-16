@@ -21,9 +21,12 @@ export function scorePlace(
     conditions.weather.condition === 'rain' ||
     conditions.weather.condition === 'heavy-rain' ||
     conditions.weather.condition === 'storm' ||
-    conditions.weather.rainProbability >= 60
+    conditions.weather.rainProbability >= 70
+  const hot = (conditions.weather.apparentTempC ?? conditions.weather.tempC) >= 38
   if (rainy && place.weatherSensitive) weather = 2
   else if (rainy && place.indoor) weather = 22
+  else if (hot && place.indoor) weather = 20
+  else if (hot && !place.indoor) weather = 6
   else if (!rainy && place.styles.includes('beaches')) weather = 20
 
   let time = 12
@@ -41,22 +44,27 @@ export function scorePlace(
   if (visited.has(place.id)) itinerary = 3
   if (trip?.pace === 'relaxed' && km > 8) itinerary -= 4
 
-  const total = Math.round(clamp(interest + distance + weather + time + budget + itinerary, 0, 100))
+  const activity = place.indoor ? 10 : trip?.pace === 'packed' ? 12 : 11
+
+  const total = Math.round(clamp(interest + distance + weather + time + budget + itinerary + activity * 0.15, 0, 100))
   const reasons: string[] = []
-  if (interestOverlap) reasons.push(`matches your ${place.styles.filter((s) => styles.includes(s))[0]} preference`)
-  reasons.push(`${km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`} away`)
-  if (rainy && place.indoor) reasons.push('indoor — better in this weather')
-  else if (!rainy) reasons.push('good weather now')
-  if (place.hoursKnown === false) reasons.push('hours: Not available from OSM')
-  else if (time > 8) reasons.push('fits remaining time')
-  if (place.priceKnown === false) reasons.push('price: Price unavailable')
-  else if (place.estimatedCost === 0) reasons.push('no known entry fee')
+  if (interestOverlap) reasons.push(`Matches your interest in ${place.styles.filter((s) => styles.includes(s))[0]}`)
+  else reasons.push('Fits the live map around your destination')
+  reasons.push(`${km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`} / about ${Math.max(6, Math.round((km / 28) * 60))} min from the previous stop`)
+  if (place.priceKnown === true && place.estimatedCost === 0) reasons.push('Fits your budget — no known entry fee')
+  else if (place.priceKnown === true) reasons.push('Fits your budget')
+  else reasons.push('Fits your budget (estimated — OSM has no ticket price)')
+  if (rainy && place.indoor) reasons.push('Suitable for today’s weather (indoor)')
+  else if (rainy && place.weatherSensitive) reasons.push('Weather caution — outdoor and rain-sensitive')
+  else reasons.push('Suitable for today’s weather')
+  if (place.hoursKnown === true && time > 8) reasons.push('Fits your available time')
+  else if (place.hoursKnown !== true) reasons.push('Opening hours: Not available from OSM')
 
   return {
     placeId: place.id,
     total,
     reasons: reasons.slice(0, 5),
-    breakdown: { interest, distance, weather, time, budget, itinerary },
+    breakdown: { interest, distance, weather, time, budget, itinerary, activity },
   }
 }
 
@@ -71,4 +79,11 @@ export function rankPlaces(
   return places
     .map((p) => ({ place: p, score: scorePlace(p, origin, styles, conditions, remainingBudget, trip) }))
     .sort((a, b) => b.score.total - a.score.total)
+}
+
+export function weatherSuitabilityFor(place: Place, rainProbability: number, tempC: number): 'good' | 'caution' | 'poor' {
+  if (rainProbability >= 70 && place.weatherSensitive && !place.indoor) return 'poor'
+  if (tempC >= 38 && !place.indoor) return 'caution'
+  if (rainProbability >= 55 && !place.indoor) return 'caution'
+  return 'good'
 }

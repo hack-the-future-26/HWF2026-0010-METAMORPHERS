@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '@/store/useAppStore'
@@ -64,10 +65,12 @@ export function AdaptationCard() {
   const keep = useAppStore((s) => s.keepOriginal)
   const why = useAppStore((s) => s.askWhy)
   const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
   if (!adaptation) return null
+  const text = adaptation.explanation || adaptation.reason
   return (
     <div className="rounded-3xl bg-ink-900 p-5 text-white shadow-float">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sunset-400">⚡ Trip Optimization</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sunset-400">⚡ PLAN UPDATED</p>
       <h3 className="mt-2 font-display text-2xl">{adaptation.title}</h3>
       <p className="mt-1 text-sm text-white/75">{adaptation.message}</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -78,7 +81,7 @@ export function AdaptationCard() {
           </p>
         </div>
         <div className="rounded-2xl bg-teal-700/40 p-3 text-sm">
-          <p className="text-[11px] text-teal-100">New recommendation</p>
+          <p className="text-[11px] text-teal-100">Indoor alternative</p>
           {adaptation.recommended.map((r) => (
             <p key={r.time + r.title} className="mt-1">
               {r.time} → {r.title}
@@ -86,10 +89,13 @@ export function AdaptationCard() {
           ))}
         </div>
       </div>
-      <p className="mt-3 text-sm text-teal-100">Reason: {adaptation.reason}</p>
+      <button className="mt-3 text-left text-sm text-teal-100 underline" onClick={() => setOpen((v) => !v)}>
+        Why did YatraSense change my plan?
+      </button>
+      {open && <pre className="mt-2 whitespace-pre-wrap font-sans text-sm text-white/80">{text}</pre>}
       <div className="mt-4 flex flex-wrap gap-2">
         <Button variant="sunset" onClick={accept}>
-          {adaptation.type === 'weather' ? 'Replace Activity' : 'Accept Change'}
+          Got it
         </Button>
         <Button
           variant="secondary"
@@ -101,7 +107,7 @@ export function AdaptationCard() {
           View Updated Route
         </Button>
         <Button variant="secondary" onClick={keep}>
-          Keep Original Plan
+          Undo change
         </Button>
         <Button variant="ghost" className="text-white" onClick={() => toast.message(why())}>
           Ask Why

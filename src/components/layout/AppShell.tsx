@@ -1,5 +1,5 @@
 import { Sparkles, WifiOff } from 'lucide-react'
-import { Outlet, useNavigate } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { useEffect } from 'react'
 import { BottomNav, Sidebar, TopBar } from './Nav'
@@ -30,10 +30,15 @@ export function AppShell() {
   const fallback = useAppStore((s) => s.useDestinationFallback)
   const nearbyPlaces = useAppStore((s) => s.nearbyPlaces)
   const navigate = useNavigate()
+  const location = useLocation()
 
   useEffect(() => {
     useAppStore.getState().ensureDemoDefaults()
-    void useAppStore.getState().refreshNearby(true)
+    void (async () => {
+      await useAppStore.getState().hydrateSession()
+      await useAppStore.getState().healStreetDestination()
+      await useAppStore.getState().refreshNearby(true)
+    })()
   }, [])
 
   useEffect(() => {
@@ -113,7 +118,7 @@ export function AppShell() {
           </div>
         )}
         <main className="flex-1 px-4 pb-28 pt-5 lg:px-8 lg:pb-10">
-          <Outlet />
+          <Outlet key={location.pathname} />
         </main>
       </div>
       <BottomNav />

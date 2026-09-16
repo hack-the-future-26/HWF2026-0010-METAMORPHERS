@@ -16,6 +16,10 @@ const TABS: { id: SavedList; label: string }[] = [
 
 export function SavedPlacesPage() {
   const saved = useAppStore((s) => s.saved)
+  const savedTrips = useAppStore((s) => s.savedTrips)
+  const loadTrip = useAppStore((s) => s.loadSavedTrip)
+  const deleteTrip = useAppStore((s) => s.deleteSavedTrip)
+  const duplicateTrip = useAppStore((s) => s.duplicateSavedTrip)
   const nearbyPlaces = useAppStore((s) => s.nearbyPlaces)
   const unsave = useAppStore((s) => s.unsavePlace)
   const move = useAppStore((s) => s.moveSaved)
@@ -30,6 +34,40 @@ export function SavedPlacesPage() {
   return (
     <div className="mx-auto max-w-4xl">
       <h1 className="font-display text-4xl">Saved Places</h1>
+      {savedTrips.length > 0 && (
+        <section className="mt-6">
+          <h2 className="font-display text-2xl">Saved trips</h2>
+          <div className="mt-3 space-y-2">
+            {savedTrips.map((t) => (
+              <article key={t.id} className="flex flex-wrap items-center justify-between gap-2 rounded-3xl bg-white p-4 shadow-card dark:bg-ink-800">
+                <div>
+                  <p className="font-medium">{t.title}</p>
+                  <p className="text-xs text-ink-400">
+                    {t.destination.name} · {t.dates.start} → {t.dates.end} · ₹{t.budget}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      loadTrip(t.id)
+                      navigate('/trip')
+                    }}
+                  >
+                    Load
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => duplicateTrip(t.id)}>
+                    Duplicate
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => deleteTrip(t.id)}>
+                    Delete
+                  </Button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="mt-5 flex gap-2">
         {TABS.map((t) => (
           <button
@@ -59,7 +97,7 @@ export function SavedPlacesPage() {
                   <div className="grid h-20 w-24 place-items-center rounded-2xl bg-teal-50 text-lg dark:bg-teal-950">📍</div>
                   <div className="min-w-0 flex-1">
                     <p className="font-medium">Saved place</p>
-                    <p className="text-xs text-ink-500">Details unavailable — open Live to refresh nearby OSM data.</p>
+                    <p className="text-xs text-ink-500">Saved id only — reopen Explore to reload the place card.</p>
                     <Button size="sm" variant="ghost" className="mt-2" onClick={() => unsave(s.placeId)}>
                       Remove
                     </Button>
@@ -75,7 +113,8 @@ export function SavedPlacesPage() {
                     {p.name}
                   </button>
                   <p className="text-xs text-ink-500">
-                    {p.ratingKnown === false ? 'Not available from OSM' : `⭐ ${p.rating}`} · {p.address}
+                    {p.ratingKnown === true && p.rating > 0 ? `⭐ ${p.rating}` : `${p.reviewCount ?? 0} reviews`}
+                    {p.address ? ` · ${p.address}` : ''}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Button size="sm" onClick={() => { add(p.id); toast.success('Added to trip'); navigate('/trip') }}>

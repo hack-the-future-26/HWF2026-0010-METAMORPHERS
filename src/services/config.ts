@@ -1,4 +1,5 @@
 export const API = {
+  baseUrl: (import.meta.env.VITE_API_URL || '').replace(/\/$/, ''),
   weatherUrl: import.meta.env.VITE_WEATHER_API_URL ?? 'https://api.open-meteo.com/v1/forecast',
   mapsTileUrl: import.meta.env.VITE_MAPS_TILE_URL,
   geocodingUrl: import.meta.env.VITE_GEOCODING_API_URL ?? import.meta.env.VITE_NOMINATIM_URL ?? 'https://nominatim.openstreetmap.org',
@@ -11,9 +12,13 @@ export const API = {
   eventsUrl: import.meta.env.VITE_EVENTS_API_URL,
   crowdUrl: import.meta.env.VITE_CROWD_API_URL,
   translateUrl: import.meta.env.VITE_TRANSLATE_API_URL || '/api/translate',
-  /** Local companion API by default — override with a hosted LLM later. */
   aiUrl: import.meta.env.VITE_AI_API_URL || '/api/ask',
   aiModel: import.meta.env.VITE_AI_MODEL,
+}
+
+export function apiPath(path: string) {
+  const p = path.startsWith('/') ? path : `/${path}`
+  return API.baseUrl ? `${API.baseUrl}${p}` : p
 }
 
 export function hasLive(key?: string, url?: string) {

@@ -1,7 +1,6 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   Bookmark,
-  Bus,
   Compass,
   Hotel,
   Languages,
@@ -16,12 +15,12 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useEffect, useState } from 'react'
-import { getDestination } from '@/data/destinations'
+import { destDisplayLabel, getDestination } from '@/data/destinations'
 import { backendHealth } from '@/services/backend'
 import { useAppStore } from '@/store/useAppStore'
 
 const items = [
-  { to: '/', label: 'Arrive', icon: LayoutDashboard },
+  { to: '/arrive', label: 'Home', icon: LayoutDashboard },
   { to: '/plan', label: 'Plan', icon: Sparkles },
   { to: '/explore', label: 'Explore', icon: Compass },
   { to: '/trip', label: 'My Trip', icon: Route },
@@ -31,7 +30,6 @@ const items = [
 const extra = [
   { to: '/food', label: 'Food', icon: UtensilsCrossed },
   { to: '/stay', label: 'Stay', icon: Hotel },
-  { to: '/transport', label: 'Transport', icon: Bus },
   { to: '/translate', label: 'Translate', icon: Languages },
   { to: '/budget', label: 'Budget', icon: Wallet },
   { to: '/saved', label: 'Saved', icon: Bookmark },
@@ -53,7 +51,7 @@ export function Sidebar() {
         </div>
         <div>
           <p className="font-display text-lg leading-none">YatraSense</p>
-          <p className="mt-1 text-[11px] text-ink-400">New-city companion</p>
+          <p className="mt-1 text-[11px] text-ink-400">The plan that adapts</p>
         </div>
       </div>
       <nav className="flex flex-1 flex-col gap-1">
@@ -66,10 +64,10 @@ export function Sidebar() {
         ))}
       </nav>
       <div className="rounded-2xl bg-gradient-to-br from-teal-50 via-white to-sunset-100/60 p-3 text-xs text-teal-900 dark:from-teal-950 dark:via-ink-800 dark:to-ink-800 dark:text-teal-200">
-        <p>New in town → Arrive → Plan → Walk</p>
+        <p>Search a city → scored itinerary → live weather rewrite.</p>
         <p className="mt-2 flex items-center gap-2 text-[11px]">
           <span className={`size-1.5 rounded-full ${apiOn ? 'bg-live-500' : 'bg-ink-400'}`} />
-          {apiOn == null ? 'Checking companion…' : apiOn ? 'Companion API live' : 'API offline — run npm run dev'}
+          {apiOn == null ? 'Checking API…' : apiOn ? 'Live data API on' : 'API offline — run npm run dev'}
         </p>
       </div>
     </aside>
@@ -80,7 +78,7 @@ function SideLink({ to, label, icon: Icon }: (typeof items)[number]) {
   return (
     <NavLink
       to={to}
-      end={to === '/'}
+      end={to === '/arrive'}
       className={({ isActive }) =>
         cn(
           'flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm transition',
@@ -102,7 +100,7 @@ export function BottomNav() {
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-sand-200 bg-white/90 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl dark:border-white/10 dark:bg-ink-900/90 lg:hidden">
       <div className="mx-auto grid max-w-lg grid-cols-5">
         {items.map((item) => {
-          const active = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to)
+          const active = item.to === '/arrive' ? location.pathname === '/arrive' : location.pathname.startsWith(item.to)
           const Icon = item.icon
           return (
             <NavLink
@@ -130,20 +128,21 @@ export function TopBar() {
   const toggleTheme = useAppStore((s) => s.toggleTheme)
   const setNotificationsOpen = useAppStore((s) => s.setNotificationsOpen)
   const user = useAppStore((s) => s.user)
+  const signedIn = useAppStore((s) => s.signedIn)
   const loc = useAppStore((s) => s.location)
   const destId = useAppStore((s) => s.planner.destinationId)
   const destQuery = useAppStore((s) => s.planner.destinationQuery)
   const liveStarted = useAppStore((s) => s.liveStarted)
   const dest = destId ? getDestination(destId) : null
   const areaLabel = dest
-    ? `📍 ${dest.name}${dest.state ? `, ${dest.state}` : ''}`
+    ? `📍 ${destDisplayLabel(dest)}`
     : destQuery
-      ? `📍 ${destQuery}`
+      ? `📍 ${destDisplayLabel({ name: destQuery })}`
       : '📍 Choose a city'
 
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-sand-200/80 bg-sand-100/80 px-4 py-3 backdrop-blur-xl dark:border-white/8 dark:bg-[#0b1113]/80 lg:px-8">
-      <button onClick={() => navigate('/')} className="flex items-center gap-2 lg:hidden">
+      <button onClick={() => navigate('/arrive')} className="flex items-center gap-2 lg:hidden">
         <span className="grid size-8 place-items-center rounded-xl bg-gradient-to-br from-sunset-500 via-teal-600 to-teal-900 text-white">
           <MapPinned className="size-4" />
         </span>
@@ -176,10 +175,10 @@ export function TopBar() {
           {unread > 0 && <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-sunset-500" />}
         </button>
         <button
-          onClick={() => navigate('/profile')}
+          onClick={() => navigate(signedIn ? '/profile' : '/login')}
           className="grid size-10 place-items-center rounded-full bg-teal-800 text-sm font-semibold text-white"
         >
-          {user.name.slice(0, 1)}
+          {signedIn ? user.name.slice(0, 1) : '→'}
         </button>
       </div>
     </header>

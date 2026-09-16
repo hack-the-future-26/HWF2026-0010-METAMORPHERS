@@ -12,6 +12,8 @@ import { Input } from '@/components/ui/Input'
 import { toast } from 'sonner'
 import { PlaceImage } from '@/components/ui/PlaceImage'
 
+const STEPS = 4
+
 export function PlanTripPage() {
   const planner = useAppStore((s) => s.planner)
   const setPlanner = useAppStore((s) => s.setPlanner)
@@ -23,11 +25,16 @@ export function PlanTripPage() {
   const catalog = searchDestinations(planner.destinationQuery)
   const [geo, setGeo] = useState<Destination[]>([])
   const [geoLoading, setGeoLoading] = useState(false)
-  const results = [...geo, ...catalog.filter((d) => !geo.some((g) => g.id === d.id))]
+  const results = [...catalog.filter((d) => !geo.some((g) => g.id === d.id || g.name.toLowerCase() === d.name.toLowerCase())), ...geo]
+  const step = Math.min(STEPS, planner.step > STEPS ? STEPS : planner.step)
+
+  useEffect(() => {
+    if (planner.step > STEPS) setPlanner({ step: STEPS })
+  }, [planner.step, setPlanner])
 
   useEffect(() => {
     const q = planner.destinationQuery.trim()
-    if (planner.step !== 1 || q.length < 3) {
+    if (step !== 1 || q.length < 3) {
       setGeo([])
       return
     }
@@ -40,46 +47,58 @@ export function PlanTripPage() {
         .finally(() => setGeoLoading(false))
     }, 600)
     return () => window.clearTimeout(t)
-  }, [planner.destinationQuery, planner.step])
+  }, [planner.destinationQuery, step])
 
-  const next = () => setPlanner({ step: Math.min(8, planner.step + 1) })
-  const back = () => setPlanner({ step: Math.max(1, planner.step - 1) })
+  const next = () => setPlanner({ step: Math.min(STEPS, step + 1) })
+  const back = () => setPlanner({ step: Math.max(1, step - 1) })
 
   return (
     <div className="mx-auto max-w-3xl">
-      <p className="text-xs uppercase tracking-[0.18em] text-ink-400">Step {planner.step} of 8</p>
+      <p className="text-xs uppercase tracking-[0.18em] text-ink-400">Build a living itinerary</p>
+      <p className="mt-1 text-sm text-ink-500">Four beats: city, when, how you travel, then the budget that scores the day.</p>
+      <p className="mt-4 text-xs uppercase tracking-[0.18em] text-ink-400">
+        Step {step} of {STEPS}
+      </p>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-sand-200 dark:bg-white/10">
-        <div className="h-full bg-teal-700" style={{ width: `${(planner.step / 8) * 100}%` }} />
+        <div className="h-full bg-teal-700" style={{ width: `${(step / STEPS) * 100}%` }} />
       </div>
 
       {planner.generating ? (
         <Card className="mt-8 p-8 text-center">
           <div className="mx-auto size-16 animate-pulse rounded-full bg-teal-100 dark:bg-teal-950" />
-          <h2 className="mt-6 font-display text-3xl">YatraSense is planning your perfect day...</h2>
+          <h2 className="mt-6 font-display text-3xl">Scoring live places against your trip…</h2>
           <p className="mt-3 text-sm text-ink-500">{planner.generateMessage}</p>
           <p className="mt-2 text-xs text-ink-400">{planner.generateProgress}%</p>
         </Card>
       ) : (
         <Card className="mt-6 p-6 sm:p-8">
-          {planner.step === 1 && (
+          {step === 1 && (
             <Step title="Where do you want to go?">
-              <p className="mb-3 text-sm text-ink-500">Pick an Indian city. Coordinates are city-center WGS84.</p>
+              <p className="mb-3 text-sm text-ink-500">
+                Search an Indian city. Coordinates come from Photon — we never substitute another city.
+              </p>
               <Input
                 value={planner.destinationQuery}
                 onChange={(e) => {
-                  const q = e.target.value
-                  const hit = searchDestinations(q)[0]
-                  const vizag = q.toLowerCase().includes('visakh') || q.toLowerCase().includes('vizag')
-                  setPlanner({ destinationQuery: q, destinationId: vizag ? 'vizag' : hit && q.length >= 2 ? hit.id : planner.destinationId })
+                  setPlanner({ destinationQuery: e.target.value, destinationId: null })
                 }}
-                placeholder="Delhi, Mumbai, Goa, Jaipur…"
+                placeholder="Hyderabad, Jaipur, Goa, Udaipur…"
               />
               {geoLoading && <p className="mt-2 text-xs text-ink-400">Searching OpenStreetMap…</p>}
+              {!geoLoading && planner.destinationQuery.trim().length >= 3 && results.length === 0 && (
+                <p className="mt-2 text-sm text-sunset-600">We couldn&apos;t find this destination. Try another city or location.</p>
+              )}
               <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {(planner.destinationQuery.trim().length < 2 ? searchDestinations('') : results).slice(0, 18).map((d) => (
                   <button
                     key={d.id}
-                    onClick={() => setPlanner({ destinationId: d.id, destinationQuery: d.name, step: 2 })}
+                    onClick={() =>
+                      setPlanner({
+                        destinationId: d.id,
+                        destinationQuery: d.displayName || d.name,
+                        step: 2,
+                      })
+                    }
                     className={`overflow-hidden rounded-2xl text-left ring-2 ${planner.destinationId === d.id ? 'ring-teal-700' : 'ring-transparent'} hover:ring-teal-600/40`}
                   >
                     <PlaceImage src={d.image} name={d.name} city={d.name} lat={d.lat} lng={d.lng} imgClassName="h-20 w-full" />
@@ -95,8 +114,8 @@ export function PlanTripPage() {
             </Step>
           )}
 
-          {planner.step === 2 && (
-            <Step title="When are you travelling?">
+          {step === 2 && (
+            <Step title="When, and who’s coming?">
               <Calendar
                 start={planner.startDate}
                 end={planner.endDate}
@@ -105,40 +124,38 @@ export function PlanTripPage() {
               <p className="mt-4 text-sm text-ink-500">
                 {days} day{days > 1 ? 's' : ''} selected
               </p>
-            </Step>
-          )}
-
-          {planner.step === 3 && (
-            <Step title="Who’s coming along?">
-              {(['adults', 'children', 'seniors'] as const).map((k) => (
-                <div key={k} className="mt-3 flex items-center justify-between rounded-2xl bg-sand-100 px-4 py-3 dark:bg-white/5">
-                  <span className="capitalize">{k}</span>
-                  <div className="flex items-center gap-3">
-                    <Button
-                      size="icon"
-                      variant="secondary"
-                      onClick={() =>
-                        setPlanner({ travelers: { ...planner.travelers, [k]: Math.max(k === 'adults' ? 1 : 0, planner.travelers[k] - 1) } })
-                      }
-                    >
-                      −
-                    </Button>
-                    <span className="w-6 text-center">{planner.travelers[k]}</span>
-                    <Button
-                      size="icon"
-                      variant="secondary"
-                      onClick={() => setPlanner({ travelers: { ...planner.travelers, [k]: planner.travelers[k] + 1 } })}
-                    >
-                      +
-                    </Button>
+              <div className="mt-5 space-y-3">
+                {(['adults', 'children', 'seniors'] as const).map((k) => (
+                  <div key={k} className="flex items-center justify-between rounded-2xl bg-sand-100 px-4 py-3 dark:bg-white/5">
+                    <span className="capitalize">{k}</span>
+                    <div className="flex items-center gap-3">
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        onClick={() =>
+                          setPlanner({ travelers: { ...planner.travelers, [k]: Math.max(k === 'adults' ? 1 : 0, planner.travelers[k] - 1) } })
+                        }
+                      >
+                        −
+                      </Button>
+                      <span className="w-6 text-center">{planner.travelers[k]}</span>
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        onClick={() => setPlanner({ travelers: { ...planner.travelers, [k]: planner.travelers[k] + 1 } })}
+                      >
+                        +
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </Step>
           )}
 
-          {planner.step === 4 && (
-            <Step title="What’s your travel style?">
+          {step === 3 && (
+            <Step title="How should the days feel?">
+              <p className="mb-3 text-sm text-ink-500">Travel style</p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {STYLES.map((s) => {
                   const on = planner.styles.includes(s.id)
@@ -158,43 +175,7 @@ export function PlanTripPage() {
                   )
                 })}
               </div>
-            </Step>
-          )}
-
-          {planner.step === 5 && (
-            <Step title="What’s your budget?">
-              <input
-                type="range"
-                min={1000}
-                max={100000}
-                step={500}
-                value={planner.budget}
-                onChange={(e) => setPlanner({ budget: Number(e.target.value) })}
-                className="mt-4 w-full accent-teal-700"
-              />
-              <p className="mt-2 font-display text-3xl">
-                {formatInr(planner.budget)}
-                {planner.budget >= 100000 ? '+' : ''}
-              </p>
-              <p className="text-sm text-ink-500">
-                {tier.label} · ~{formatInr(daily)} per day
-              </p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {BUDGET_TIERS.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => setPlanner({ budget: t.max === 100000 ? 80000 : t.max - 2000 })}
-                    className={`rounded-full px-3 py-1 text-xs ${tier.id === t.id ? 'bg-teal-800 text-white' : 'bg-sand-100 dark:bg-white/8'}`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </Step>
-          )}
-
-          {planner.step === 6 && (
-            <Step title="How packed should the days feel?">
+              <p className="mb-3 mt-6 text-sm text-ink-500">Pace</p>
               <div className="space-y-3">
                 {PACE.map((p) => (
                   <button
@@ -207,11 +188,7 @@ export function PlanTripPage() {
                   </button>
                 ))}
               </div>
-            </Step>
-          )}
-
-          {planner.step === 7 && (
-            <Step title="How do you like to move?">
+              <p className="mb-3 mt-6 text-sm text-ink-500">How you like to move</p>
               <div className="grid grid-cols-2 gap-3">
                 {TRANSPORT.map((t) => {
                   const on = planner.transport.includes(t.id)
@@ -234,22 +211,49 @@ export function PlanTripPage() {
             </Step>
           )}
 
-          {planner.step === 8 && (
-            <Step title="Ready when you are">
-              <ul className="space-y-2 text-sm text-ink-600">
-                <li>{planner.destinationQuery || 'Your destination'} · {days} days</li>
+          {step === 4 && (
+            <Step title="Budget, then generate">
+              <input
+                type="range"
+                min={1000}
+                max={100000}
+                step={500}
+                value={planner.budget}
+                onChange={(e) => setPlanner({ budget: Number(e.target.value) })}
+                className="mt-2 w-full accent-teal-700"
+              />
+              <p className="mt-2 font-display text-3xl">
+                {formatInr(planner.budget)}
+                {planner.budget >= 100000 ? '+' : ''}
+              </p>
+              <p className="text-sm text-ink-500">
+                {tier.label} · ~{formatInr(daily)} per day
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {BUDGET_TIERS.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setPlanner({ budget: t.max === 100000 ? 80000 : t.max - 2000 })}
+                    className={`rounded-full px-3 py-1 text-xs ${tier.id === t.id ? 'bg-teal-800 text-white' : 'bg-sand-100 dark:bg-white/8'}`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <ul className="mt-6 space-y-2 rounded-2xl bg-sand-100 p-4 text-sm text-ink-600 dark:bg-white/5">
+                <li>
+                  {planner.destinationQuery || 'Your destination'} · {days} days
+                </li>
                 <li>
                   {planner.travelers.adults} adults
                   {planner.travelers.children ? ` · ${planner.travelers.children} children` : ''}
                 </li>
                 <li>{planner.styles.join(', ') || 'Your saved preferences'}</li>
                 <li>
-                  {formatInr(planner.budget)} · {planner.pace} · {planner.transport.join(', ')}
+                  {planner.pace} · {planner.transport.join(', ')}
                 </li>
               </ul>
-              {planner.generateError && (
-                <p className="mt-4 text-sm text-sunset-600">{planner.generateError}</p>
-              )}
+              {planner.generateError && <p className="mt-4 text-sm text-sunset-600">{planner.generateError}</p>}
               <Button
                 size="lg"
                 className="mt-6 w-full"
@@ -261,17 +265,26 @@ export function PlanTripPage() {
                   else toast.error(err || "We couldn't build that trip.")
                 }}
               >
-                ✨ Create My Smart Trip
+                Create my adaptive trip
               </Button>
             </Step>
           )}
 
-          {planner.step !== 8 && (
+          {step !== STEPS && (
             <div className="mt-8 flex justify-between">
-              <Button variant="ghost" onClick={back} disabled={planner.step === 1}>
+              <Button variant="ghost" onClick={back} disabled={step === 1}>
                 Back
               </Button>
-              <Button onClick={next}>Continue</Button>
+              <Button onClick={next} disabled={step === 1 && !planner.destinationId && planner.destinationQuery.trim().length < 3}>
+                Continue
+              </Button>
+            </div>
+          )}
+          {step === STEPS && (
+            <div className="mt-6">
+              <Button variant="ghost" onClick={back}>
+                Back
+              </Button>
             </div>
           )}
         </Card>
@@ -323,9 +336,7 @@ function Calendar({
         <Button size="sm" variant="ghost" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}>
           ←
         </Button>
-        <p className="font-medium">
-          {cursor.toLocaleString('en-IN', { month: 'long', year: 'numeric' })}
-        </p>
+        <p className="font-medium">{cursor.toLocaleString('en-IN', { month: 'long', year: 'numeric' })}</p>
         <Button size="sm" variant="ghost" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}>
           →
         </Button>

@@ -1,9 +1,11 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { DEFAULT_USER } from '@/data/user'
+import { DEFAULT_USER, GUEST_USER } from '@/data/user'
 import { placesForTrip } from '@/data/cityLandmarks'
+import { estimateTripBudget, optimizeActivitiesForBudget } from '@/lib/budgetEstimate'
+import { fetchHotels, fetchMe, savePlaceRemote, saveTripRemote } from '@/services/backend'
 import { getPlace, PLACES, registerPlaces } from '@/data/places'
-import { getDestination, registerDestination, DESTINATIONS } from '@/data/destinations'
+import { getDestination, registerDestination, DESTINATIONS, findDestination, lodgingCityName, searchDestinations, needsCityHeal, catalogParentCity, destDisplayLabel, cityHealQuery } from '@/data/destinations'
 import type {
   AdaptationSuggestion,
   AppDataMode,
@@ -21,13 +23,14 @@ import type {
   RoutePath,
   SavedList,
   SavedPlace,
+  SavedTrip,
   ThemeMode,
   Trip,
   User,
 } from '@/types'
 import { addDays, haversineKm, minutesToTime, todayIso, uid } from '@/lib/utils'
 import { activeOrigin, areaOrigin, planningOrigin, queryMatchesDestination, tripMatchesPlanner } from '@/lib/origin'
-import { DEFAULT_CITY, DEMO_AREA, isVizagDestination } from '@/lib/demoLocation'
+import { isVizagDestination } from '@/lib/demoLocation'
 import {
   askAssistant,
   applyOsrmHops,
@@ -47,10 +50,9 @@ import {
   applyCrowdMove,
   applyReplacement,
   closureAdaptation,
-  crowdAdaptation,
+  heatAdaptation,
   lateAdaptation,
-  rainAdaptation,
-  trafficAdaptation,
+  withRouteBudgetDeltas,
 } from '@/lib/adaptEngine'
 import { DESTINATION_NOT_FOUND, GPS_DENIED, NO_NEARBY_ATTRACTIONS, OFF_ROUTE_MESSAGE, WEATHER_UNAVAILABLE } from '@/lib/osmCopy'
 import { minKmToRoute, OFF_ROUTE_KM } from '@/lib/routeGeometry'
@@ -123,13 +125,13 @@ export const QUICK_PRESETS: Record<
 
 const defaultPlanner = (): PlannerState => ({
   step: 1,
-  destinationQuery: DEMO_AREA.city,
-  destinationId: DEMO_AREA.destinationId,
+  destinationQuery: '',
+  destinationId: null,
   startDate: todayIso(),
   endDate: todayIso(),
   travelers: { adults: 2, children: 0, seniors: 0 },
-  styles: ['beaches', 'food', 'culture', 'nature'],
-  budget: 5000,
+  styles: ['culture', 'food', 'history'],
+  budget: 8000,
   pace: 'balanced',
   transport: ['taxi', 'walking'],
   generating: false,
@@ -164,7 +166,7 @@ const defaultLocation = (): LocationState => ({
   loading: false,
   error: null,
   fix: null,
-  label: DEFAULT_CITY.label,
+  label: '',
   watching: false,
   lastNearbyAt: 0,
   lastNearbyLat: null,
@@ -172,8 +174,8 @@ const defaultLocation = (): LocationState => ({
 })
 
 function draftTripFromPlace(place: Place, planner: PlannerState): Trip {
-  const destId = planner.destinationId || place.destinationId || DEMO_AREA.destinationId
-  const dest = getDestination(destId)
+  const destId = planner.destinationId || place.destinationId
+  const dest = destId ? getDestination(destId) : { id: place.destinationId, name: place.name, lat: place.lat, lng: place.lng, state: '', country: '', tagline: '', image: '', timezone: 'UTC' }
   const start = planner.startDate || todayIso()
   const activity = {
     id: uid('act'),
@@ -216,7 +218,7 @@ function draftTripFromPlace(place: Place, planner: PlannerState): Trip {
       },
     ],
     status: 'planned',
-    matchScore: 80,
+    matchScore: 0,
     route: { totalTravelMin: 0, totalDistanceKm: 0, optimized: false },
     createdAt: new Date().toISOString(),
     estimatedSpend: activity.cost,
@@ -236,8 +238,51 @@ function pushNote(
   ].slice(0, 24)
 }
 
+function applyCatalogCityHeal(planner: PlannerState, trip: Trip | null): { planner: PlannerState; trip: Trip | null } {
+  const hint = [planner.destinationQuery, trip?.destinationName].filter(Boolean).join(', ')
+  const dest = planner.destinationId ? findDestination(planner.destinationId) : undefined
+  const probe = {
+    name: dest?.name && dest.name !== 'Selected location' ? dest.name : hint || dest?.name || trip?.destinationName || '',
+    city: dest?.city,
+    country: dest?.country,
+    displayName: dest?.displayName || hint,
+    state: dest?.state,
+    lat: dest?.lat ?? trip?.destinationLat,
+    lng: dest?.lng ?? trip?.destinationLng,
+  }
+  const tripProbe = trip
+    ? {
+        name: trip.destinationName || probe.name,
+        displayName: trip.destinationName || probe.displayName,
+        lat: trip.destinationLat,
+        lng: trip.destinationLng,
+      }
+    : null
+  if (!needsCityHeal(probe, hint) && !needsCityHeal(tripProbe, hint)) return { planner, trip }
+  const parent = catalogParentCity(probe, hint) || catalogParentCity(tripProbe, hint)
+  if (!parent) return { planner, trip }
+  return {
+    planner: {
+      ...planner,
+      destinationId: parent.id,
+      destinationQuery: parent.displayName || destDisplayLabel(parent),
+    },
+    trip: trip
+      ? {
+          ...trip,
+          destinationId: parent.id,
+          destinationName: parent.name,
+          destinationLat: parent.lat,
+          destinationLng: parent.lng,
+        }
+      : trip,
+  }
+}
+
 interface AppStore {
   user: User
+  signedIn: boolean
+  personalMatch: number | null
   theme: ThemeMode
   online: boolean
   demoOpen: boolean
@@ -255,8 +300,10 @@ interface AppStore {
   liveStarted: boolean
   conditions: LiveConditions
   adaptation: AdaptationSuggestion | null
+  previousTrip: Trip | null
   crowdSuggestion: AdaptationSuggestion | null
   saved: SavedPlace[]
+  savedTrips: SavedTrip[]
   expenses: Expense[]
   notifications: AppNotification[]
   chat: ChatMessage[]
@@ -274,6 +321,9 @@ interface AppStore {
   lastRerouteAt: number
   destinationExplicit: boolean
   hydrateWeather: () => Promise<void>
+  hydrateSession: () => Promise<void>
+  healStreetDestination: () => Promise<boolean>
+  applyAuth: (user: { id: string; name: string; email: string }) => void
   ensureDemoDefaults: () => void
   resetTrip: () => void
   simulateGps: () => void
@@ -286,6 +336,7 @@ interface AppStore {
   refreshNearby: (force?: boolean) => Promise<void>
   refreshLiveRoute: () => Promise<void>
   evaluateRealWeather: () => void
+  runAdaptation: (demoMode: boolean) => Promise<void>
   endTrip: () => void
   setTheme: (t: ThemeMode) => void
   toggleTheme: () => void
@@ -320,7 +371,13 @@ interface AppStore {
   askWhy: () => string
   acceptCrowdMove: () => void
   optimize: () => void
+  saveCurrentTrip: () => void
+  loadSavedTrip: (id: string) => void
+  deleteSavedTrip: (id: string) => void
+  duplicateSavedTrip: (id: string) => void
   simulateRain: () => void
+  simulateHeat: () => void
+  simulateNormalWeather: () => void
   simulateTraffic: () => void
   simulateCrowd: () => void
   simulateClosure: () => void
@@ -336,6 +393,8 @@ export const useAppStore = create<AppStore>()(
   persist(
     (set, get) => ({
       user: DEFAULT_USER,
+      signedIn: false,
+      personalMatch: null,
       theme: 'light',
       online: true,
       demoOpen: false,
@@ -353,8 +412,10 @@ export const useAppStore = create<AppStore>()(
       liveStarted: false,
       conditions: defaultConditions(),
       adaptation: null,
+      previousTrip: null,
       crowdSuggestion: null,
       saved: [],
+      savedTrips: [],
       expenses: [],
       notifications: [
         {
@@ -384,6 +445,106 @@ export const useAppStore = create<AppStore>()(
       ensureDemoDefaults: () => {
         set({ appMode: 'real', demoOpen: false })
       },
+      applyAuth: (user) => {
+        set({
+          signedIn: true,
+          user: {
+            ...get().user,
+            id: user.id,
+            name: user.name,
+            email: user.email,
+          },
+        })
+      },
+      hydrateSession: async () => {
+        const me = await fetchMe()
+        if (!me) {
+          const current = get().user
+          if (current.id === 'user_pravallika' || current.id === 'guest' || !current.email) {
+            set({ user: GUEST_USER, signedIn: false, personalMatch: null })
+          } else {
+            set({ signedIn: false })
+          }
+          await get().healStreetDestination()
+          return
+        }
+        const latest = me.trips?.[me.trips.length - 1]?.trip as Trip | undefined
+        set({
+          signedIn: true,
+          personalMatch: me.match,
+          user: {
+            ...get().user,
+            id: me.user.id,
+            name: me.user.name,
+            email: me.user.email,
+          },
+          trip: get().trip ?? latest ?? null,
+        })
+        await get().healStreetDestination()
+      },
+      healStreetDestination: async () => {
+        const destId = get().trip?.destinationId ?? get().planner.destinationId
+        if (!destId) return false
+        const dest = getDestination(destId)
+        const query = get().planner.destinationQuery || get().trip?.destinationName || dest.displayName || dest.name
+        const catalog = applyCatalogCityHeal(get().planner, get().trip)
+        if (catalog.planner.destinationId && catalog.planner.destinationId !== destId) {
+          registerDestination(getDestination(catalog.planner.destinationId))
+          set({
+            planner: catalog.planner,
+            trip: catalog.trip,
+            nearbyPlaces: [],
+            location: {
+              ...get().location,
+              label:
+                get().liveStarted && get().location.permission === 'granted' && get().location.label
+                  ? get().location.label
+                  : destDisplayLabel(getDestination(catalog.planner.destinationId)),
+            },
+          })
+          return true
+        }
+        if (!needsCityHeal(dest, query)) return false
+        if (!get().online) return false
+        const q = cityHealQuery(dest, query)
+        if (q.trim().length < 2) return false
+        try {
+          const hits = await geocodingService.search(q)
+          const parent =
+            hits.find((h) => /india/i.test(h.country) && !needsCityHeal(h)) ??
+            hits.find((h) => !needsCityHeal(h) && /india/i.test(h.country))
+          if (!parent || parent.id === destId) return false
+          registerDestination(parent)
+          const trip = get().trip
+          set({
+            planner: {
+              ...get().planner,
+              destinationId: parent.id,
+              destinationQuery: parent.displayName || destDisplayLabel(parent),
+            },
+            trip: trip
+              ? {
+                  ...trip,
+                  destinationId: parent.id,
+                  destinationName: parent.name,
+                  destinationLat: parent.lat,
+                  destinationLng: parent.lng,
+                }
+              : trip,
+            nearbyPlaces: [],
+            location: {
+              ...get().location,
+              label:
+                get().liveStarted && get().location.permission === 'granted' && get().location.label
+                  ? get().location.label
+                  : destDisplayLabel(parent),
+            },
+          })
+          return true
+        } catch {
+          return false
+        }
+      },
       resetTrip: () => {
         locationService.stopWatchingLocation()
         set({
@@ -401,6 +562,8 @@ export const useAppStore = create<AppStore>()(
         })
       },
       simulateGps: () => {
+        const dest = findDestination(get().trip?.destinationId ?? get().planner.destinationId)
+        if (!dest) return
         set({
           location: {
             ...get().location,
@@ -408,10 +571,10 @@ export const useAppStore = create<AppStore>()(
             loading: false,
             error: null,
             watching: get().liveStarted,
-            label: DEMO_AREA.label,
+            label: dest.displayName || dest.name,
             fix: {
-              lat: DEMO_AREA.lat,
-              lng: DEMO_AREA.lng,
+              lat: dest.lat,
+              lng: dest.lng,
               accuracy: 14,
               altitude: null,
               heading: null,
@@ -425,12 +588,13 @@ export const useAppStore = create<AppStore>()(
 
       hydrateWeather: async () => {
         if (!get().online) return
+        if (get().appMode === 'demo') return
         try {
           const destId = get().trip?.destinationId ?? get().planner.destinationId
           const origin = get().liveStarted
             ? activeOrigin(get().location, destId)
             : areaOrigin(destId)
-          if (!origin.lat && !origin.lng && origin.source === 'fallback') return
+          if (origin.unresolved || (!origin.lat && !origin.lng)) return
           const weather = await weatherService.getCurrent(origin)
           set({ conditions: { ...get().conditions, weather } })
           if (get().appMode === 'real' && !weather.unavailable) get().evaluateRealWeather()
@@ -455,8 +619,7 @@ export const useAppStore = create<AppStore>()(
         get().setTheme(theme)
       },
       setAppMode: (appMode) => {
-        set({ appMode: 'real', demoOpen: false })
-        void appMode
+        set({ appMode, demoOpen: appMode === 'demo' })
       },
       requestLocation: async () => {
         if (get().location.permission === 'granted') {
@@ -488,7 +651,7 @@ export const useAppStore = create<AppStore>()(
               fix,
               label,
             },
-            notifications: pushNote(get().notifications, 'info', 'Location enabled', `You're near ${label}. Destination stays ${get().planner.destinationQuery || DEMO_AREA.city}.`),
+            notifications: pushNote(get().notifications, 'info', 'Location enabled', `You're near ${label}.`),
           })
           await get().refreshNearby(true)
           await get().hydrateWeather()
@@ -641,8 +804,10 @@ export const useAppStore = create<AppStore>()(
       },
       refreshNearby: async (force = false) => {
         if (!get().online) return
-        const destId = get().trip?.destinationId ?? get().planner.destinationId ?? DEMO_AREA.destinationId
+        const destId = get().trip?.destinationId ?? get().planner.destinationId
+        if (!destId) return
         const origin = get().liveStarted ? activeOrigin(get().location, destId) : areaOrigin(destId)
+        if (origin.unresolved) return
         const loc = get().location
         if (
           !force &&
@@ -654,8 +819,8 @@ export const useAppStore = create<AppStore>()(
         }
         set({ nearbyLoading: true, nearbyError: null })
         try {
-          const allowCatalog = destId === 'vizag'
-          const radiusM = destId === 'vizag' ? 14000 : 16000
+          const allowCatalog = get().appMode === 'demo' && destId === 'vizag'
+          const radiusM = 8000
           const list = await placesService.nearby(origin, radiusM, destId, { allowCatalog })
           const merged = placesForTrip(destId, origin, list, radiusM / 1000 + 2)
           set({
@@ -670,20 +835,24 @@ export const useAppStore = create<AppStore>()(
             },
           })
         } catch {
-          const destIdNow = get().trip?.destinationId ?? get().planner.destinationId ?? DEMO_AREA.destinationId
-          const originNow = get().liveStarted ? activeOrigin(get().location, destIdNow) : areaOrigin(destIdNow)
+          const destIdNow = get().trip?.destinationId ?? get().planner.destinationId
+          const originNow = destIdNow
+            ? get().liveStarted
+              ? activeOrigin(get().location, destIdNow)
+              : areaOrigin(destIdNow)
+            : null
           const catalog =
-            destIdNow === 'vizag'
+            destIdNow && get().appMode === 'demo' && destIdNow === 'vizag' && originNow
               ? placesForTrip(
                   destIdNow,
                   originNow,
-                  PLACES.filter((p) => p.destinationId === destIdNow || haversineKm(DEMO_AREA, p) < 20),
+                  PLACES.filter((p) => p.destinationId === destIdNow),
                   20,
                 )
-              : placesForTrip(destIdNow, originNow, [], 20)
+              : get().nearbyPlaces
           set({
             nearbyLoading: false,
-            nearbyError: catalog.length ? null : 'Unable to load places right now.',
+            nearbyError: catalog.length ? 'OSM places unavailable. Showing previously loaded places.' : 'Unable to load places right now.',
             nearbyPlaces: catalog,
           })
         }
@@ -718,6 +887,9 @@ export const useAppStore = create<AppStore>()(
         }
       },
       evaluateRealWeather: () => {
+        void get().runAdaptation(false)
+      },
+      runAdaptation: async (demoMode: boolean) => {
         const trip = get().trip
         if (!trip) return
         const w = get().conditions.weather
@@ -726,20 +898,35 @@ export const useAppStore = create<AppStore>()(
           itinerary: trip,
           weather: w,
           availablePlaces: get().nearbyPlaces,
-          demoMode: false,
+          demoMode,
         })
         if (!sug) return
-        if (get().adaptation?.affectedActivityId === sug.affectedActivityId) return
-        const next = recalcRoute(applyReplacement(trip, sug))
+        if (!demoMode && get().adaptation?.affectedActivityId === sug.affectedActivityId) return
+        const before = {
+          km: trip.route.totalDistanceKm,
+          min: trip.route.totalTravelMin,
+          spend: trip.budgetEstimate?.mid ?? trip.estimatedSpend,
+        }
+        let next = recalcRoute(applyReplacement(trip, sug))
+        if (get().online) {
+          try {
+            next = await applyOsrmHops(next)
+          } catch {
+            /* keep haversine hops */
+          }
+        }
+        next = { ...next, budgetEstimate: estimateTripBudget(next, next.hotel) }
+        const after = {
+          km: next.route.totalDistanceKm,
+          min: next.route.totalTravelMin,
+          spend: next.budgetEstimate?.mid ?? next.estimatedSpend,
+        }
+        const explained = withRouteBudgetDeltas(sug, before, after)
         set({
+          previousTrip: trip,
           trip: next,
-          adaptation: sug,
-          notifications: pushNote(
-            get().notifications,
-            'weather',
-            'Itinerary updated',
-            sug.reason,
-          ),
+          adaptation: explained,
+          notifications: pushNote(get().notifications, 'weather', 'PLAN UPDATED', explained.message),
         })
         void get().refreshLiveRoute()
       },
@@ -812,7 +999,7 @@ export const useAppStore = create<AppStore>()(
             endDate: addDays(start, span),
             destinationId: get().planner.destinationId,
             destinationQuery: get().planner.destinationQuery,
-            step: 2,
+            step: get().planner.destinationId ? 2 : 1,
             generating: false,
           },
         })
@@ -833,6 +1020,7 @@ export const useAppStore = create<AppStore>()(
           })
         }
 
+        try {
         stage(8, generateMessages[0])
         if (get().location.permission === 'granted' && get().destinationExplicit) {
           void get().refreshGpsSilent()
@@ -843,6 +1031,15 @@ export const useAppStore = create<AppStore>()(
         const query = get().planner.destinationQuery.trim()
         if (query && !queryMatchesDestination(query, destId)) {
           destId = null
+        }
+        if (!destId && query) {
+          const qn = query.toLowerCase()
+          const catalogHit = searchDestinations(query).find(
+            (d) =>
+              DESTINATIONS.some((c) => c.id === d.id) &&
+              (d.name.toLowerCase() === qn || d.id === qn || (d.city ?? '').toLowerCase() === qn),
+          )
+          if (catalogHit) destId = catalogHit.id
         }
         if (!destId && query && get().online) {
           try {
@@ -856,7 +1053,15 @@ export const useAppStore = create<AppStore>()(
           }
         }
         if (!destId && !query) {
-          destId = DEMO_AREA.destinationId
+          set({
+            planner: {
+              ...get().planner,
+              generating: false,
+              generateProgress: 0,
+              generateError: DESTINATION_NOT_FOUND,
+            },
+          })
+          return
         }
         if (!destId) {
           set({
@@ -868,6 +1073,13 @@ export const useAppStore = create<AppStore>()(
             },
           })
           return
+        }
+        {
+          const probe = getDestination(destId)
+          if (needsCityHeal(probe, query)) {
+            const parent = catalogParentCity(probe, query)
+            if (parent) destId = parent.id
+          }
         }
 
         const dest = getDestination(destId)
@@ -883,27 +1095,92 @@ export const useAppStore = create<AppStore>()(
         })
 
         const origin = planningOrigin(get().location, destId)
-        const radiusM = destId === 'vizag' ? 14000 : 18000
+        if (origin.unresolved || (origin.lat === 0 && origin.lng === 0)) {
+          set({
+            planner: {
+              ...get().planner,
+              generating: false,
+              generateProgress: 0,
+              generateError: DESTINATION_NOT_FOUND,
+            },
+          })
+          return
+        }
+        const radiusM = 8000
+        stage(32, 'Loading live hotels…')
+        let liveHotels: Place[] = []
+        if (get().online) {
+          try {
+            const pack = await Promise.race([
+              fetchHotels(destId, 0, 30, {
+                lat: dest.lat,
+                lng: dest.lng,
+                name: lodgingCityName(dest),
+                city: dest.city || lodgingCityName(dest),
+              }),
+              new Promise<never>((_, reject) => globalThis.setTimeout(() => reject(new Error('hotels-timeout')), 14000)),
+            ])
+            liveHotels = pack.hotels.map((h) => ({
+              id: h.id,
+              destinationId: destId,
+              name: h.name,
+              category: 'hotel' as const,
+              styles: ['relaxation' as const],
+              description: h.area,
+              rating: h.rating ?? 0,
+              reviewCount: h.reviewCount,
+              image: h.photo || '',
+              images: h.photo ? [h.photo] : [],
+              lat: h.lat,
+              lng: h.lng,
+              address: h.address || h.area,
+              openingHours: '',
+              opensAt: 0,
+              closesAt: 24,
+              entryFee: 0,
+              bestTime: '',
+              crowd: 'moderate' as const,
+              crowdNote: '',
+              durationMin: 45,
+              estimatedCost: Math.round((h.price.low + h.price.high) / 2),
+              indoor: true,
+              weatherSensitive: false,
+              tags: ['hotel', destId],
+              source: h.source === 'google' ? 'nominatim' : 'osm',
+              phone: h.phone || undefined,
+              website: h.website || undefined,
+              ratingKnown: h.rating != null,
+              hoursKnown: false,
+              priceKnown: false,
+              crowdKnown: false,
+              imageKnown: Boolean(h.photo),
+            }))
+            stage(42, `${pack.total} hotels on the map`)
+          } catch {
+            stage(42, 'Hotel feed timed out — continuing with map lodging')
+          }
+        }
         let osm: Place[] = []
+        stage(48, generateMessages[2])
         if (get().online) {
           try {
             osm = await Promise.race([
               placesService.nearby(origin, radiusM, destId, {
-                allowCatalog: demoMode || destId === 'vizag',
+                allowCatalog: get().appMode === 'demo' && destId === 'vizag',
               }),
               new Promise<Place[]>((_, reject) =>
-                globalThis.setTimeout(() => reject(new Error('places-timeout')), 12000),
+                globalThis.setTimeout(() => reject(new Error('places-timeout')), 24000),
               ),
             ])
           } catch {
-            osm = destId === 'vizag' ? PLACES.filter((p) => p.destinationId === 'vizag') : []
+            osm = get().appMode === 'demo' && destId === 'vizag' ? PLACES.filter((p) => p.destinationId === 'vizag') : []
           }
-        } else if (destId === 'vizag') {
+        } else if (get().appMode === 'demo' && destId === 'vizag') {
           osm = PLACES.filter((p) => p.destinationId === 'vizag')
         }
-        const extra = placesForTrip(destId, origin, osm, radiusM / 1000 + 4)
+        const extra = placesForTrip(destId, origin, [...osm, ...liveHotels], radiusM / 1000 + 6)
 
-        stage(48, generateMessages[3])
+        stage(62, generateMessages[3])
         let weather = get().conditions.weather
         if (get().online) {
           try {
@@ -927,6 +1204,12 @@ export const useAppStore = create<AppStore>()(
         }
 
         stage(100, generateMessages[6])
+        const personal = get().personalMatch
+        trip = {
+          ...trip,
+          budgetEstimate: trip.budgetEstimate ?? estimateTripBudget(trip, trip.hotel),
+          matchScore: personal ?? trip.matchScore,
+        }
         const attractions = extra.filter((p) => p.category === 'attraction' || p.category === 'hidden')
         set({
           trip,
@@ -947,10 +1230,21 @@ export const useAppStore = create<AppStore>()(
             get().notifications,
             'info',
             attractions.length ? 'Itinerary ready' : 'Trip ready — few map places',
-            attractions.length ? `${trip.title} is ready to explore.` : NO_NEARBY_ATTRACTIONS,
+            trip.shortageNote || (attractions.length ? `${trip.title} is ready to explore.` : NO_NEARBY_ATTRACTIONS),
           ),
         })
         void get().refreshLiveRoute()
+        void saveTripRemote(trip)
+        } catch (err) {
+          set({
+            planner: {
+              ...get().planner,
+              generating: false,
+              generateProgress: 0,
+              generateError: err instanceof Error ? err.message : 'Trip planning failed. Try again.',
+            },
+          })
+        }
       },
 
       regenerateTrip: async () => {
@@ -1073,6 +1367,7 @@ export const useAppStore = create<AppStore>()(
         set({
           saved: [{ placeId, list, savedAt: new Date().toISOString(), snapshot: place }, ...get().saved],
         })
+        if (place) void savePlaceRemote(place)
       },
       unsavePlace: (placeId) => set({ saved: get().saved.filter((s) => s.placeId !== placeId) }),
       moveSaved: (placeId, list) =>
@@ -1102,24 +1397,12 @@ export const useAppStore = create<AppStore>()(
         })
       },
 
-      acceptAdaptation: () => {
-        const { trip, adaptation } = get()
-        if (!trip || !adaptation) return
-        const next = recalcRoute(applyReplacement(trip, adaptation))
-        set({
-          trip: next,
-          adaptation: null,
-          notifications: pushNote(
-            get().notifications,
-            adaptation.type === 'weather' ? 'weather' : 'traffic',
-            'Itinerary updated',
-            adaptation.reason,
-          ),
-        })
-        void get().refreshLiveRoute()
+      acceptAdaptation: () => set({ adaptation: null }),
+      keepOriginal: () => {
+        const prev = get().previousTrip
+        set({ trip: prev ?? get().trip, adaptation: null, previousTrip: null })
       },
-      keepOriginal: () => set({ adaptation: null }),
-      askWhy: () => get().adaptation?.reason ?? 'This change reduces travel time and avoids disruption.',
+      askWhy: () => get().adaptation?.explanation || get().adaptation?.reason || 'Conditions changed, so an outdoor stop was swapped for an indoor alternative.',
       acceptCrowdMove: () => {
         const trip = get().trip
         const suggestion = get().crowdSuggestion
@@ -1133,87 +1416,152 @@ export const useAppStore = create<AppStore>()(
       optimize: () => {
         const trip = get().trip
         if (!trip) return
-        const { trip: next, wins } = optimizeTrip(trip, get().conditions)
+        const budgeted = optimizeActivitiesForBudget(trip, trip.hotel)
+        const { trip: next, wins } = optimizeTrip(budgeted.trip, get().conditions)
         set({
-          trip: next,
-          lastOptimizeWins: wins,
+          trip: { ...next, budgetEstimate: estimateTripBudget(next, next.hotel) },
+          lastOptimizeWins: [...budgeted.wins, ...wins],
           lastRouteSavedMin: next.route.lastSavedMin ?? 0,
-          notifications: pushNote(get().notifications, 'info', 'Optimization complete', wins.join(' · ')),
+          notifications: pushNote(get().notifications, 'info', 'Optimization complete', [...budgeted.wins, ...wins].join(' · ') || 'Plan tightened'),
         })
       },
 
-      simulateRain: () => {
+      saveCurrentTrip: () => {
         const trip = get().trip
+        if (!trip) return
+        const dest = findDestination(trip.destinationId)
+        const row: SavedTrip = {
+          id: uid('saved'),
+          title: trip.title,
+          destination: dest ?? {
+            name: trip.destinationName || trip.destinationId,
+            lat: trip.destinationLat ?? 0,
+            lng: trip.destinationLng ?? 0,
+          },
+          dates: { start: trip.startDate, end: trip.endDate },
+          budget: trip.budget,
+          preferences: { styles: trip.styles, pace: trip.pace },
+          itinerary: trip,
+          weatherSnapshot: get().conditions.weather,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+        set({ savedTrips: [row, ...get().savedTrips].slice(0, 20) })
+      },
+      loadSavedTrip: (id) => {
+        const row = get().savedTrips.find((t) => t.id === id)
+        if (!row) return
+        set({
+          trip: row.itinerary,
+          planner: {
+            ...get().planner,
+            destinationId: row.itinerary.destinationId,
+            destinationQuery: row.itinerary.destinationName || row.destination.name,
+            budget: row.budget,
+            styles: row.preferences.styles,
+            pace: row.preferences.pace,
+            startDate: row.dates.start,
+            endDate: row.dates.end,
+          },
+          destinationExplicit: true,
+          conditions: row.weatherSnapshot
+            ? { ...get().conditions, weather: { ...row.weatherSnapshot, stale: true } }
+            : get().conditions,
+        })
+        void get().healStreetDestination()
+      },
+      deleteSavedTrip: (id) => set({ savedTrips: get().savedTrips.filter((t) => t.id !== id) }),
+      duplicateSavedTrip: (id) => {
+        const row = get().savedTrips.find((t) => t.id === id)
+        if (!row) return
+        const copy: SavedTrip = {
+          ...row,
+          id: uid('saved'),
+          title: `${row.title} (copy)`,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+        set({ savedTrips: [copy, ...get().savedTrips] })
+      },
+
+      simulateRain: () => {
         const weather = {
           ...get().conditions.weather,
           condition: 'heavy-rain' as const,
-          rainProbability: 88,
+          rainProbability: 82,
           precipitationMm: 4,
-          summary: 'Heavy rain (test adaptation)',
+          summary: 'Heavy rain (demo)',
           unavailable: false,
+          source: 'Open-Meteo',
         }
-        set({ conditions: { ...get().conditions, weather } })
+        set({ conditions: { ...get().conditions, weather }, appMode: 'demo' })
+        void get().runAdaptation(true)
+      },
+      simulateHeat: () => {
+        const weather = {
+          ...get().conditions.weather,
+          condition: 'clear' as const,
+          tempC: 39,
+          apparentTempC: 41,
+          rainProbability: 5,
+          summary: 'Extreme heat (demo)',
+          unavailable: false,
+          source: 'Open-Meteo',
+        }
+        set({ conditions: { ...get().conditions, weather }, appMode: 'demo' })
+        const trip = get().trip
         if (!trip) return
-        const sug = adaptItinerary({
-          itinerary: trip,
-          weather,
-          availablePlaces: get().nearbyPlaces,
-          demoMode: false,
-        }) ?? rainAdaptation(trip, get().nearbyPlaces, false)
+        const sug = heatAdaptation(trip, get().nearbyPlaces, get().planner.destinationId === 'vizag')
         if (!sug) {
-          set({
-            notifications: pushNote(
-              get().notifications,
-              'weather',
-              'Rain simulated',
-              'No outdoor stop to replace from current map data.',
-            ),
-          })
+          void get().runAdaptation(true)
           return
         }
-        const next = recalcRoute(applyReplacement(trip, sug))
-        set({
-          trip: next,
-          adaptation: sug,
-          notifications: pushNote(
-            get().notifications,
-            'weather',
-            '🌧️ Rain detected — itinerary adapted.',
-            'YatraSense adapted your journey to changing conditions.',
-          ),
-        })
-        void get().refreshLiveRoute()
+        set({ conditions: { ...get().conditions, weather } })
+        void get().runAdaptation(true)
       },
-      simulateTraffic: () => {
-        const trip = get().trip
+      simulateNormalWeather: () => {
         set({
           conditions: {
             ...get().conditions,
-            traffic: 'heavy',
-            trafficFeed: { status: 'estimated', value: 'heavy', source: 'jury-demo' },
+            weather: {
+              ...get().conditions.weather,
+              condition: 'clear',
+              rainProbability: 12,
+              tempC: Math.min(get().conditions.weather.tempC || 28, 32),
+              summary: 'Normal weather (demo)',
+              unavailable: false,
+            },
+          },
+          adaptation: null,
+          appMode: 'demo',
+        })
+        void get().hydrateWeather()
+      },
+      simulateTraffic: () => {
+        set({
+          conditions: {
+            ...get().conditions,
+            trafficFeed: { status: 'unavailable', source: 'No live traffic provider connected' },
           },
           notifications: pushNote(
             get().notifications,
             'traffic',
-            'Traffic increased on your route',
-            'Jury demo — not a live traffic feed.',
+            'Traffic unavailable',
+            'No live traffic provider connected. Demo does not invent congestion percentages.',
           ),
-          adaptation: trip ? trafficAdaptation(trip) : get().adaptation,
         })
       },
       simulateCrowd: () => {
-        const place = getPlace('rk-beach')
         set({
           conditions: {
             ...get().conditions,
-            crowdOverrides: { ...get().conditions.crowdOverrides, 'rk-beach': 'high' as CrowdLevel },
+            crowdFeed: { status: 'unavailable', source: 'No live crowd provider connected' },
           },
-          crowdSuggestion: place ? crowdAdaptation(place) : null,
           notifications: pushNote(
             get().notifications,
             'crowd',
-            'Beach crowd is increasing',
-            'High crowd expected between 5–7 PM at RK Beach.',
+            'Crowd unavailable',
+            'No live crowd provider connected. Demo does not invent crowd percentages.',
           ),
         })
       },
@@ -1272,7 +1620,7 @@ export const useAppStore = create<AppStore>()(
         const spent = get().expenses.reduce((s, e) => s + e.amount, 0)
         const budget = get().trip?.budget ?? get().user.preferences.defaultBudget
         const origin = activeOrigin(get().location, get().trip?.destinationId ?? get().planner.destinationId)
-        const dest = get().trip?.destinationName ?? get().planner.destinationQuery ?? DEFAULT_CITY.city
+        const dest = get().trip?.destinationName ?? get().planner.destinationQuery ?? 'your destination'
         const destId = get().trip?.destinationId ?? get().planner.destinationId
         const nextAct = get().trip?.daysPlan[0]?.activities.find((a) => a.kind === 'place')
         const result = await askAssistant(text, {
@@ -1280,7 +1628,7 @@ export const useAppStore = create<AppStore>()(
           conditions: get().conditions,
           remainingBudget: budget - spent,
           spent,
-          label: origin.label || DEFAULT_CITY.label,
+          label: origin.label,
           destination: dest,
           destinationId: destId,
           nextName: nextAct?.title,
@@ -1290,6 +1638,7 @@ export const useAppStore = create<AppStore>()(
           live: get().liveStarted,
           adapted: Boolean(get().adaptation),
           adaptationReason: get().adaptation?.reason,
+          adaptationExplanation: get().adaptation?.explanation,
           nearbyNames: get().nearbyPlaces.slice(0, 6).map((p) => p.name),
         })
         if (result.action === 'cheap' && get().trip) {
@@ -1326,8 +1675,11 @@ export const useAppStore = create<AppStore>()(
       name: 'yatrasense-store',
       partialize: (s) => ({
         user: s.user,
+        signedIn: s.signedIn,
+        personalMatch: s.personalMatch,
         theme: s.theme,
         saved: s.saved,
+        savedTrips: s.savedTrips,
         expenses: s.expenses,
         trip: s.trip,
         planner: { ...s.planner, generating: false },
@@ -1349,26 +1701,34 @@ export const useAppStore = create<AppStore>()(
           : current.planner
         const destKnown =
           !rawPlanner.destinationId ||
+          Boolean(findDestination(rawPlanner.destinationId)) ||
           DESTINATIONS.some((d) => d.id === rawPlanner.destinationId) ||
           rawPlanner.destinationId.startsWith('geo_')
-        const planner = destKnown && rawPlanner.destinationId
-          ? rawPlanner
-          : { ...rawPlanner, destinationId: DEFAULT_CITY.destinationId, destinationQuery: DEFAULT_CITY.city }
-        const rawTrip = tripMatchesPlanner(p?.trip, planner) ? p!.trip! : null
-        const trip = rawTrip
-        const destCenter = getDestination(planner.destinationId || DEFAULT_CITY.destinationId)
-        const nearby = (p?.nearbyPlaces ?? current.nearbyPlaces).filter(
-          (place) =>
-            (place.destinationId === planner.destinationId ||
-              (planner.destinationId === 'vizag' && haversineKm(DEFAULT_CITY, place) < 35)) &&
-            haversineKm(destCenter, place) < 45,
-        )
+        const plannerBase = { ...rawPlanner } as PlannerState & { flyingFrom?: unknown }
+        delete plannerBase.flyingFrom
+        const plannerRaw = destKnown ? plannerBase : { ...plannerBase, destinationId: null }
+        const rawUser = { ...(p?.user ?? current.user) } as User & { arrivalOrigin?: unknown }
+        delete rawUser.arrivalOrigin
+        const user = rawUser
+        const rawTrip = tripMatchesPlanner(p?.trip, plannerRaw) ? p!.trip! : null
+        const healed = applyCatalogCityHeal(plannerRaw, rawTrip)
+        const planner = healed.planner
+        const trip = healed.trip
+        const destCenter = planner.destinationId ? findDestination(planner.destinationId) : undefined
+        const nearby = (p?.nearbyPlaces ?? current.nearbyPlaces).filter((place) => {
+          if (!planner.destinationId) return false
+          if (place.destinationId === planner.destinationId) return true
+          if (!destCenter) return false
+          return haversineKm(destCenter, place) < 45
+        })
         return {
           ...current,
           ...p,
+          user,
           trip,
           planner,
           nearbyPlaces: nearby,
+          savedTrips: p?.savedTrips ?? current.savedTrips,
           destinationExplicit: explicit,
           appMode: 'real',
           liveStarted: false,
@@ -1386,13 +1746,48 @@ export const useAppStore = create<AppStore>()(
             label:
               p?.location?.permission === 'granted' && p.location.label
                 ? p.location.label
-                : getDestination(planner.destinationId || DEFAULT_CITY.destinationId).name,
+                : destCenter
+                  ? destDisplayLabel(destCenter)
+                  : p?.location?.label || '',
           },
         }
       },
-      version: 5,
+      version: 9,
       migrate: (persisted, version) => {
         const p = persisted as Partial<AppStore>
+        if (version < 9) {
+          const planner = { ...(p.planner ?? defaultPlanner()), generating: false } as PlannerState & {
+            flyingFrom?: unknown
+          }
+          delete planner.flyingFrom
+          const user = { ...(p.user ?? GUEST_USER) } as User & { arrivalOrigin?: unknown }
+          delete user.arrivalOrigin
+          return { ...p, planner, user } as AppStore
+        }
+        if (version < 7) {
+          const seeded = p.user?.id === 'user_pravallika' || p.user?.email === 'pravallika@yatrasense.app'
+          return {
+            ...p,
+            user: seeded ? GUEST_USER : p.user,
+            signedIn: false,
+            personalMatch: p.personalMatch ?? null,
+            planner: { ...(p.planner ?? defaultPlanner()), generating: false, generateError: null },
+            nearbyPlaces: version < 5 ? [] : p.nearbyPlaces,
+            trip: version < 5 ? null : p.trip,
+            appMode: 'real',
+            demoOpen: false,
+          } as AppStore
+        }
+        if (version < 6) {
+          return {
+            ...p,
+            planner: { ...(p.planner ?? defaultPlanner()), generating: false },
+            nearbyPlaces: version < 5 ? [] : p.nearbyPlaces,
+            trip: version < 5 ? null : p.trip,
+            appMode: 'real',
+            demoOpen: false,
+          } as AppStore
+        }
         if (version < 5) {
           return {
             ...p,

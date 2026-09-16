@@ -1,17 +1,19 @@
 import type { User } from '@/types'
 
-export const DEFAULT_USER: User = {
-  id: 'user_pravallika',
-  name: 'Pravallika',
-  email: 'pravallika@yatrasense.app',
-  hometown: 'Hyderabad',
+export const GUEST_USER: User = {
+  id: 'guest',
+  name: 'Guest',
+  email: '',
+  hometown: '',
   preferences: {
-    styles: ['nature', 'food', 'beaches'],
+    styles: ['culture', 'food', 'history'],
     budgetTier: 'moderate',
-    defaultBudget: 5000,
+    defaultBudget: 12000,
     transport: ['taxi', 'walking', 'public'],
     pace: 'balanced',
     language: 'English',
     notifications: true,
   },
 }
+
+export const DEFAULT_USER = GUEST_USER

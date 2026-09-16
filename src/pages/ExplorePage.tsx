@@ -24,11 +24,11 @@ const browseable = (p: Place) => p.category !== 'emergency'
 
 export function ExplorePage() {
   const nearby = useAppStore((s) => s.nearbyPlaces)
-  const destId = useAppStore((s) => s.trip?.destinationId ?? s.planner.destinationId) ?? 'vizag'
+  const destId = useAppStore((s) => s.trip?.destinationId ?? s.planner.destinationId)
   const loading = useAppStore((s) => s.nearbyLoading)
   const error = useAppStore((s) => s.nearbyError)
   const refresh = useAppStore((s) => s.refreshNearby)
-  const dest = getDestination(destId)
+  const dest = destId ? getDestination(destId) : { name: 'your destination' }
   const catalog = destId === 'vizag' ? placesForDestination('vizag') : []
   const seen = new Set<string>()
   const places = [...nearby, ...catalog].filter(browseable).filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)))
@@ -39,8 +39,8 @@ export function ExplorePage() {
 
   return (
     <PlacesBrowser
-      title="Explore Nearby"
-      subtitle={`OpenStreetMap places around ${dest.name}. Missing fields stay unavailable.`}
+      title="Explore this city"
+      subtitle={`Named places around ${dest.name} from OpenStreetMap. Ratings and prices appear only when a live source returns them.`}
       filters={FILTERS}
       places={places}
       loading={loading}

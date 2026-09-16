@@ -57,9 +57,8 @@ export function ActivityModal() {
     <Modal open={Boolean(place)} onClose={() => set(null)} title={place.name} wide>
       <PlaceImage src={place.image} name={place.name} city={origin.label} lat={place.lat} lng={place.lng} category={place.category} imgClassName="mb-4 h-52 w-full rounded-3xl" />
       <div className="mb-3 flex flex-wrap gap-2">
-        <Badge>{place.ratingKnown === true ? `⭐ ${place.rating}` : 'Rating unavailable'}</Badge>
+        <Badge>{place.ratingKnown === true && place.rating > 0 ? `⭐ ${place.rating}` : `${place.reviewCount ?? 0} reviews`}</Badge>
         <Badge tone="sand">{place.category}</Badge>
-        <Badge tone="sand">Live crowd data unavailable</Badge>
         {closed && <Badge tone="red">Temporarily closed</Badge>}
         {place.source === 'osm' && <Badge tone="sand">OpenStreetMap</Badge>}
       </div>
@@ -67,19 +66,15 @@ export function ActivityModal() {
       <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
         <Info k="Location" v={`${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`} />
         <Info k="Address" v={exactAddress || `${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`} />
-        <Info k="Opening hours" v={place.hoursKnown !== true ? 'Opening hours unavailable' : place.openingHours} />
-        <Info
-          k="Entry fee"
-          v={place.priceKnown === false ? 'Price unavailable' : place.entryFee ? formatInr(place.entryFee) : 'Free'}
-        />
-        <Info k="Best time" v={place.hoursKnown === false ? 'Not available from OSM' : place.bestTime} />
+        {place.hoursKnown === true && place.openingHours ? <Info k="Opening hours" v={place.openingHours} /> : null}
+        {place.priceKnown === true ? (
+          <Info k="Entry fee" v={place.entryFee ? formatInr(place.entryFee) : 'Free / no ticket listed'} />
+        ) : null}
+        {place.hoursKnown === true && place.bestTime ? <Info k="Best time" v={place.bestTime} /> : null}
         <Info k="Duration" v={`${place.durationMin} min`} />
         <Info k="Distance" v={distLabel} />
-        <Info k="Travel time" v={timeLabel} />
-        <Info
-          k="Est. cost"
-          v={place.priceKnown === false ? 'Price unavailable' : formatInr(place.estimatedCost)}
-        />
+        <Info k="How to get here" v={timeLabel} />
+        {place.priceKnown === true && place.estimatedCost ? <Info k="Est. cost" v={formatInr(place.estimatedCost)} /> : null}
         <Info
           k="Weather"
           v={

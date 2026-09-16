@@ -1,15 +1,24 @@
 import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { immediatePlacePhoto, lookupPlacePhoto, streetPhoto } from '@/lib/media'
+import { fetchVenuePhoto } from '@/services/backend'
+
+function kindOf(category?: string) {
+  if (category === 'hotel') return 'hotel'
+  if (category === 'restaurant' || category === 'cafe') return 'food'
+  return 'place'
+}
+
+function isSatellite(url?: string) {
+  return Boolean(url && /arcgisonline|World_Imagery|basemaps\.cartocdn/i.test(url))
+}
 
 export function PlaceImage({
   src,
   name,
   city,
-  lat,
-  lng,
   className,
   imgClassName,
+  category,
 }: {
   src?: string
   name: string
@@ -20,33 +29,21 @@ export function PlaceImage({
   className?: string
   imgClassName?: string
 }) {
-  const geo = immediatePlacePhoto(lat, lng)
-  const [url, setUrl] = useState(src || geo)
+  const given = src && !isSatellite(src) ? src : ''
+  const [url, setUrl] = useState(given)
 
   useEffect(() => {
-    const base = src || geo
-    setUrl(base)
+    const start = src && !isSatellite(src) ? src : ''
+    setUrl(start)
     let live = true
-    void lookupPlacePhoto(name, city).then((photo) => {
+    void fetchVenuePhoto(name, city, kindOf(category)).then((photo) => {
       if (!live || !photo) return
       setUrl(photo)
     })
     return () => {
       live = false
     }
-  }, [src, name, city, geo])
-
-  const onError = () => {
-    setUrl((prev) => {
-      if (lat != null && lng != null) {
-        const sat = immediatePlacePhoto(lat, lng)
-        const map = streetPhoto(lat, lng)
-        if (prev && prev !== sat && prev !== map) return sat
-        if (prev !== map) return map
-      }
-      return prev
-    })
-  }
+  }, [src, name, city, category])
 
   if (url) {
     return (
@@ -55,10 +52,21 @@ export function PlaceImage({
         alt={name}
         referrerPolicy="no-referrer"
         className={cn('bg-sand-200 object-cover', className, imgClassName)}
-        onError={onError}
+        onError={() => setUrl('')}
       />
     )
   }
 
-  return <div className={cn('bg-sand-200', className, imgClassName)} aria-hidden />
+  return (
+    <div
+      className={cn(
+        'grid place-items-center bg-gradient-to-br from-teal-800 via-teal-700 to-ink-900 text-white',
+        className,
+        imgClassName,
+      )}
+      aria-hidden
+    >
+      <span className="font-display text-2xl opacity-90">{name.slice(0, 1)}</span>
+    </div>
+  )
 }
